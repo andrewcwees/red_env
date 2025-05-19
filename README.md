@@ -1,5 +1,5 @@
 ### project: redenv
-Use R to evaluate how historically 'redlined' neighborhoods across >200 cities in the U.S. are associated with higher average levels of exposure to noise and air pollution across transportation sectors (railroads, roadways, and aviation) in the present day.
+Using R, evaluate how historically 'redlined' neighborhoods across >200 cities in the U.S. are associated with higher average levels of exposure to noise and air pollution across transportation sectors (railroads, roadways, and aviation) in the present day.
 
 ### SETUP
 
@@ -30,8 +30,7 @@ library(tigris)
 - stats.R
 
 ## data
-- original HOLC redlining maps
-- HOLC redlining maps 2010 crosswalk file
+- redlining maps (original maps & 2010 crosswalk file)
 - noise pollution estimates
 - air pollution estimates
 
@@ -39,6 +38,15 @@ library(tigris)
 ### USAGE
 
 Start by installing and loading all required packages. Run compiling scripts in the order listed and modify directory paths as needed.
+
+Step-by-step guide for compiling:
+1.  run clean_redmaps.R (need [file] and [file])
+2.  
+
+
+Step-by-step guide for analysis:
+
+
 
 
 
