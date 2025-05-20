@@ -44,13 +44,13 @@ Start by installing and loading all required packages. Run compiling scripts in 
 
 Step-by-step guide for compiling:
 1.  run clean_redmaps.R (need 2010crosswalk.gpkg and og_maps.gpkg)
-2.  run comp_noise.R and comp_air.R to organize emissions data
+2.  run comp_noise.R and comp_air.R to organize emission sets
 3.  run redxp.R to synthesize noisedisp.csv with airdisp.csv
 4.  run analysis scripts plots.R and stats.R to explore the compiled dataset 'redxp.csv'
 
 
 Step-by-step guide for analysis:
-
+1. 
 
 
 
