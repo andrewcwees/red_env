@@ -1,5 +1,5 @@
 # project: red_env
-Using R and public data, evaluate how historically 'redlined' neighborhoods across >200 cities in the U.S. are associated with higher average levels of exposure to noise and air pollution across transportation sectors (railroads, roadways, and aviation) in the present day.
+Use public data in R to evaluate how historically 'redlined' neighborhoods across >200 cities in the U.S. are associated with higher average levels of exposure to noise and air pollution across transportation sectors (railroads, roadways, and aviation) in the present day.
 
 ## SETUP
 
@@ -36,11 +36,11 @@ All data used in this project is publicly available (download links stored in sc
 Start by installing and loading all required packages. Run compiling scripts in the order listed and modify directory paths as needed.
 
 Step-by-step guide for compiling/analysis:
-1.  run clean_maps.R (need original & 2010 crosswalk files from Mapping Inequality Project)
-2.  run comp_noise.R
-3.  run comp_air.R
-4.  run redxp.R to synthesize noisedisp.csv with airdisp.csv
-5.  run analysis scripts plots.R and stats.R to explore the compiled dataset 'redxp.csv'
+1.  run clean_maps.R (using original & 2010 crosswalk files from Mapping Inequality Project)
+3.  run comp_noise.R (using noise raster files from National Transportation Noise Map)
+4.  run comp_air.R (using 2017 & 2019 air emissions estimates from Neighborhood Emissions Mapping Operation)
+5.  run redxp.R to synthesize noise & air pollution exposure files noisedisp.csv and airdisp.csv
+6.  run scripts plots.R and stats.R to explore the compiled dataset 'redxp.csv'
 
 
 
