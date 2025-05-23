@@ -20,7 +20,7 @@ library(tidycensus)
 library(tigris)
 
 ### scripts
-1. clean_redmaps.R
+1. clean_maps.R
 2. comp_noise.R
 3. comp_air.R
 4. redxp.R
@@ -29,26 +29,19 @@ library(tigris)
 
 ### data
 
-All data used in this project is publicly available. These are links to download the required files:
-
-- [Redlining Maps](https://dsl.richmond.edu/panorama/redlining/data) (need original maps for noise data & 2010 crosswalk file for air data)
-- [Noise Emissions Estimates for 2018 & 2020](https://www.bts.gov/geospatial/national-transportation-noise-map)
-- [Air Emissions Estimates for 2017 & 2019](http://air.csiss.gmu.edu/aq/NEMO/)
-
+All data used in this project is publicly available (download links stored in scripts)
 
 ## USAGE
 
 Start by installing and loading all required packages. Run compiling scripts in the order listed and modify directory paths as needed.
 
-Step-by-step guide for compiling:
-1.  run clean_redmaps.R (need 2010crosswalk.gpkg and og_maps.gpkg)
-2.  run comp_noise.R and comp_air.R to organize emission sets
-3.  run redxp.R to synthesize noisedisp.csv with airdisp.csv
-4.  run analysis scripts plots.R and stats.R to explore the compiled dataset 'redxp.csv'
+Step-by-step guide for compiling/analysis:
+1.  run clean_maps.R (need original & 2010 crosswalk files from Mapping Inequality Project)
+2.  run comp_noise.R
+3.  run comp_air.R
+4.  run redxp.R to synthesize noisedisp.csv with airdisp.csv
+5.  run analysis scripts plots.R and stats.R to explore the compiled dataset 'redxp.csv'
 
-
-Step-by-step guide for analysis:
-1. 
 
 
 
