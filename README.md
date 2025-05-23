@@ -1,4 +1,4 @@
-# project: redenv
+# project: red_env
 Using R and public data, evaluate how historically 'redlined' neighborhoods across >200 cities in the U.S. are associated with higher average levels of exposure to noise and air pollution across transportation sectors (railroads, roadways, and aviation) in the present day.
 
 ## SETUP
