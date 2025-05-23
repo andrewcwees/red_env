@@ -1,9 +1,9 @@
-### project: redenv
+# project: redenv
 Using R and public data, evaluate how historically 'redlined' neighborhoods across >200 cities in the U.S. are associated with higher average levels of exposure to noise and air pollution across transportation sectors (railroads, roadways, and aviation) in the present day.
 
-### SETUP
+## SETUP
 
-## required packages
+### required packages
 library(sf)
 library(httr)
 library(skimr)
@@ -19,17 +19,15 @@ library(ggspatial)
 library(tidycensus)
 library(tigris)
 
-## scripts
-# compiling
+### scripts
 1. clean_redmaps.R
 2. comp_noise.R
 3. comp_air.R
 4. redxp.R
-# analysis
-- plots.R
-- stats.R
+5. plots.R
+6. stats.R
 
-## data
+### data
 
 All data used in this project is publicly available. These are links to download the required files:
 
@@ -38,7 +36,7 @@ All data used in this project is publicly available. These are links to download
 - [Air Emissions Estimates for 2017 & 2019](http://air.csiss.gmu.edu/aq/NEMO/)
 
 
-### USAGE
+## USAGE
 
 Start by installing and loading all required packages. Run compiling scripts in the order listed and modify directory paths as needed.
 
