@@ -17,7 +17,8 @@ library(tigris)
 options(tigris_use_cache = TRUE)
 
 #####
-
+# DATA FROM https://www.bts.gov/geospatial/national-transportation-noise-map (2018/2020 for road, rail, air, and total) ####
+ 
 rm(list = ls())
 gc()
 
@@ -89,6 +90,7 @@ print(percentage)
 length(unique(noise$HOLCID))
 
 fwrite(noise, 'D:/research/redenv/data/output/noisedisp.csv')
+
 
 
 
