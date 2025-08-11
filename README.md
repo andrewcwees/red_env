@@ -27,7 +27,7 @@ library(tigris)
 5. plots.R
 6. stats.R
 
-### data
+### data sources
 
 All data used in this project is publicly available
 * noise data - https://www.bts.gov/geospatial/national-transportation-noise-map
