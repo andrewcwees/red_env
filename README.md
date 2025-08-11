@@ -29,7 +29,10 @@ library(tigris)
 
 ### data
 
-All data used in this project is publicly available (download links stored in scripts)
+All data used in this project is publicly available
+* noise data - https://www.bts.gov/geospatial/national-transportation-noise-map
+* air data - http://air.csiss.gmu.edu/aq/NEMO/
+* redlining maps - https://dsl.richmond.edu/panorama/redlining/introduction
 
 ## USAGE
 
