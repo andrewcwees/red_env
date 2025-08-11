@@ -17,6 +17,7 @@ library(tigris)
 options(tigris_use_cache = TRUE)
 
 # process source files ####
+# DATA FROM http://air.csiss.gmu.edu/aq/NEMO/ #### 
 rm(list = ls())
 gc()
 
@@ -168,6 +169,7 @@ data <- fread('D:/research/redenv/data/output/nemo_x_cw.csv') %>%
 
 length(unique(data$HOLCID))
 fwrite(data, 'D:/research/redenv/data/output/airdisp.csv')
+
 
 
 
