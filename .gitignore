@@ -1,0 +1,17 @@
+# R
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+*.Rproj
+
+# rsconnect deployment metadata (deploy from your local copy)
+rsconnect/
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# temp
+*.tmp
+~$*
