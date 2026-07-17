@@ -21,8 +21,8 @@
 # Self-contained: reads only redenv_data.rds (baked by prep_data.R). Run with:
 #   shiny::runApp()
 #
-# Derived from unpublished HUM Lab data; external sharing pending sign-off from
-# Chris Lim.
+# Derived from unpublished HUM Lab data; external sharing signed off by Chris
+# Lim (2026-07-17). Keep the deployed app private until finished, then publish.
 
 library(shiny)
 library(bslib)
@@ -37,6 +37,7 @@ zones  <- d$zones
 exp    <- as.data.frame(d$exp)
 cities <- d$cities
 rank   <- d$rank
+zattr  <- st_drop_geometry(zones)   # zone grade + demographics, no geometry
 
 # ---- lookups ----------------------------------------------------------------
 sectors    <- c("Rail" = "Rail", "Road" = "Road")
@@ -47,6 +48,14 @@ poll_lab   <- c(Noise = "noise", NO = "NO", NO2 = "NO2", PM2.5 = "PM2.5")
 grade_levels <- c("A", "B", "C", "D")
 # canonical HOLC grade colors (green/blue/yellow/red)
 grade_cols <- c(A = "#76a865", B = "#7cb5bd", C = "#ffff00", D = "#d9838d")
+
+# equity chart: group exposure by HOLC grade (default) or a demographic quintile
+equity_by <- c("HOLC grade"     = "grade",
+               "Median income"  = "inc",
+               "% Hispanic"     = "pct_hisp",
+               "% Black"        = "pct_blk")
+# demographic quintile ramp (low -> high value, yellow -> dark red)
+q_ramp <- colorRampPalette(c("#ffffcc", "#800026"))
 
 # city selector choices: "Birmingham, AL" -> "Birmingham, AL"
 city_choices <- setNames(cities$place, cities$place)
@@ -70,6 +79,8 @@ ui <- page_sidebar(
                  selected = "Rail", inline = TRUE),
     selectInput("poll", "Pollutant / measure", choices = pollutants,
                 selected = "Noise"),
+    selectInput("eby", "Equity chart: group exposure by", choices = equity_by,
+                selected = "grade"),
     hr(),
     helpText(
       "Each polygon is a 1930s HOLC-graded neighborhood. Color shows present-day",
@@ -77,7 +88,8 @@ ui <- page_sidebar(
       "higher). Hover a zone for its grade, exposure, and demographics."
     ),
     helpText(
-      HTML("<b>Chart:</b> exposure across HOLC grades A&ndash;D nationally, with",
+      HTML("<b>Chart:</b> exposure nationally, grouped by HOLC grade or by a",
+           "demographic quintile (income, %&nbsp;Hispanic, %&nbsp;Black), with",
            "the selected city's zones overlaid &mdash; the disparity story.")
     ),
     helpText(HTML(paste(
@@ -142,10 +154,13 @@ server <- function(input, output, session) {
     sprintf("%s: %s %s exposure by HOLC zone",
             input$city, sector_label(), poll_label())
   })
-  output$chart_title <- renderText(
-    sprintf("%s %s exposure across HOLC grades (national)",
-            tools::toTitleCase(sector_label()), poll_label())
-  )
+  eby_label <- reactive(names(equity_by)[equity_by == input$eby])
+  output$chart_title <- renderText({
+    grp <- if (input$eby == "grade") "HOLC grades"
+           else sprintf("%s quintiles", eby_label())
+    sprintf("%s %s exposure across %s (national)",
+            tools::toTitleCase(sector_label()), poll_label(), grp)
+  })
 
   # ---- value boxes ----
   output$vb_ratio <- renderText({
@@ -192,23 +207,37 @@ server <- function(input, output, session) {
       fitBounds(bb[1], bb[2], bb[3], bb[4])
   })
 
-  # ---- equity chart: national grade distribution + selected city overlay ----
+  # ---- equity chart: national distribution by grade or demographic quintile,
+  #      with the selected city's zones overlaid as points --------------------
   output$equity <- renderPlot({
-    nat <- merge(exp_sel(),
-                 as.data.frame(zones)[, c("HOLCID", "grade")], by = "HOLCID")
-    nat$grade <- factor(nat$grade, levels = grade_levels)
+    eb  <- input$eby
+    nat <- merge(exp_sel(), zattr, by = "HOLCID")
+    city <- merge(st_drop_geometry(city_zones())["HOLCID"], nat, by = "HOLCID")
 
-    city <- st_drop_geometry(city_zones())
-    city$grade <- factor(city$grade, levels = grade_levels)
+    if (eb == "grade") {
+      nat$bin  <- factor(nat$grade, levels = grade_levels)
+      city$bin <- factor(city$grade, levels = grade_levels)
+      fills <- grade_cols
+      xlab  <- "HOLC grade (A = 'best' ... D = 'hazardous')"
+    } else {
+      # national quintile breaks; apply the SAME breaks to the city overlay
+      br <- unique(quantile(nat[[eb]], probs = seq(0, 1, 0.2), na.rm = TRUE))
+      labs_q <- paste0("Q", seq_len(length(br) - 1))
+      binq <- function(v) cut(v, breaks = br, include.lowest = TRUE, labels = labs_q)
+      nat$bin  <- binq(nat[[eb]])
+      city$bin <- binq(city[[eb]])
+      fills <- setNames(q_ramp(length(labs_q)), labs_q)
+      xlab  <- sprintf("%s quintile (Q1 = lowest, Q5 = highest)", eby_label())
+    }
 
-    ggplot(nat, aes(x = grade, y = logxp)) +
-      geom_boxplot(aes(fill = grade), outlier.size = 0.5, width = 0.6,
+    ggplot(nat, aes(x = bin, y = logxp)) +
+      geom_boxplot(aes(fill = bin), outlier.size = 0.5, width = 0.6,
                    alpha = 0.85, colour = "grey30") +
       geom_jitter(data = city, width = 0.15, height = 0, size = 1.6,
                   colour = "#111111", alpha = 0.8) +
-      scale_fill_manual(values = grade_cols, guide = "none") +
-      labs(x = "HOLC grade (A = 'best' ... D = 'hazardous')",
-           y = "log(exposure + 1)",
+      scale_fill_manual(values = fills, guide = "none", drop = FALSE) +
+      scale_x_discrete(drop = FALSE) +
+      labs(x = xlab, y = "log(exposure + 1)",
            subtitle = sprintf("Boxes: all U.S. graded zones. Points: %s.",
                               input$city)) +
       theme_minimal(base_size = 13) +

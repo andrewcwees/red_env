@@ -24,7 +24,7 @@
 #   * logxp is the coloring scale for every pollutant (tail concentration).
 #
 # Source data are unpublished HUM Lab work; externalizing this derived subset
-# requires sign-off from Chris Lim (same gate phxmob cleared 2026-07-08).
+# was signed off by Chris Lim (2026-07-17; same gate phxmob cleared 2026-07-08).
 
 suppressWarnings(suppressMessages({
   library(sf); library(data.table); library(dplyr); library(stringr)
@@ -36,6 +36,7 @@ d_out   <- "D:/research/redenv/data/output"
 
 keep_sectors    <- c("Rail", "Road")
 drop_pollutants <- c("CEI")
+min_zones       <- 5  # drop thin-coverage cities (< min_zones graded zones)
 
 # 1. exposure + demographics from xp_out.csv --------------------------------
 xp <- fread(file.path(d_out, "xp_out.csv"))
@@ -75,14 +76,27 @@ zones <- cw |>
 cat(sprintf("zone polygons: %d / %d exposure zones matched\n",
             nrow(zones), length(zone_ids)))
 
+# 2a. drop thin-coverage cities ---------------------------------------------
+# Cities with very few graded zones render sparse, unreadable maps and unstable
+# per-city summaries. Filtering them (and their zones) also keeps the national
+# equity reference restricted to adequately-covered cities.
+zone_counts <- zones |> st_drop_geometry() |> count(place, name = "n_zones")
+keep_places <- zone_counts$place[zone_counts$n_zones >= min_zones]
+n_dropped_cities <- nrow(zone_counts) - length(keep_places)
+n_dropped_zones  <- sum(zone_counts$n_zones[zone_counts$n_zones < min_zones])
+zones <- zones |> filter(place %in% keep_places)
+exp   <- exp[HOLCID %in% zones$HOLCID]
+cat(sprintf("thin-city filter (< %d zones): dropped %d cities / %d zones -> %d zones kept\n",
+            min_zones, n_dropped_cities, n_dropped_zones, nrow(zones)))
+
 # 3. searchable city selector table -----------------------------------------
 cities <- zones |>
   st_drop_geometry() |>
   count(place, city, state, name = "n_zones") |>
   arrange(state, city)
-cat(sprintf("cities: %d  (zones/city: min %d, median %g, max %d; %d with <5 zones)\n",
+cat(sprintf("cities: %d  (zones/city: min %d, median %g, max %d)\n",
             nrow(cities), min(cities$n_zones), median(cities$n_zones),
-            max(cities$n_zones), sum(cities$n_zones < 5)))
+            max(cities$n_zones)))
 
 # 4. anchor finding: sector first-place ranking -----------------------------
 rank <- fread(file.path(d_out, "sector_strat/sector_rank_summary.csv"))
