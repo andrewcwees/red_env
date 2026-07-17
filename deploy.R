@@ -12,8 +12,10 @@
 #      >>> setAccountInfo() line once in the R console — it's saved to your
 #      >>> machine — and leave the placeholders here untouched.)
 #
-#   >>> GATE: do not deploy until Chris Lim has signed off on externalizing
-#   >>> this derived HOLC-zone subset (same gate phxmob cleared 2026-07-08).
+#   >>> GATE (cleared): Chris Lim signed off on externalizing this derived
+#   >>> HOLC-zone subset 2026-07-17. Keep the deployed app PRIVATE until the
+#   >>> work sample is finished, then make it public (shinyapps.io dashboard >
+#   >>> the app > Settings). Andrew flips it public himself.
 #
 # DEPLOY / REDEPLOY
 #   Run this whole script from the app folder. Redeploys reuse the same URL.

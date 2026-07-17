@@ -7,22 +7,24 @@ neighborhoods graded by the 1930s **HOLC ("redlining")** maps, and shows how
 that exposure tracks HOLC grade.
 
 Purpose: a job-search work sample demonstrating R + Shiny + `leaflet` + spatial
-data (HOLC polygons, 8,920 graded zones across 221 cities) + reproducible
+data (HOLC polygons, 8,836 graded zones across 200 cities) + reproducible
 dashboarding.
 
 **Live app:** _(add your shinyapps.io URL after deploying — see below)_
 **Code:** this repository.
 
 ## What it does
-Pick a **city** (searchable, 221 cities), a **transportation sector**, and a
+Pick a **city** (searchable, 200 cities), a **transportation sector**, and a
 **pollutant / measure**:
 
 - **Map** (`leaflet` choropleth) — the selected city's HOLC zones colored by
   exposure on a **log scale** (darker = higher), outlined by HOLC grade
   (green A → red D). Hover a zone for its grade, exposure, and demographics.
-- **Equity chart** (`ggplot2`) — the exposure distribution **across HOLC grades
-  A–D nationally**, with the selected city's zones overlaid as points. This is
-  the disparity story: exposure rises monotonically from grade A to grade D.
+- **Equity chart** (`ggplot2`) — the national exposure distribution grouped by
+  **HOLC grade** (default) or, via a toggle, by **demographic quintile**
+  (median income, % Hispanic, % Black), with the selected city's zones
+  overlaid as points. This is the disparity story: exposure rises from grade A
+  to grade D, and tracks lower income / higher minority share.
 - **Value boxes** — national **Grade D-vs-A exposure ratio** for the current
   sector × pollutant, **zones mapped** in the city, and the anchor finding:
   **rail is the most stratified transportation sector** (ranks #1 in 61% of
@@ -38,6 +40,8 @@ carries the project's documented data-quality limits by design:
   unreliable and is omitted entirely.
 - **Per-city exploration + a durable national finding**, not a single national
   causal claim. No causal language.
+- **Cities with < 5 graded zones are dropped** (21 cities / 84 zones) — they
+  render sparse, unreadable maps and unstable per-city summaries.
 
 ## Files
 - `app.R` — the Shiny app. Self-contained; reads only `redenv_data.rds`.
@@ -63,8 +67,9 @@ line above.
 
 ## Provenance / data note
 Derived from **unpublished HUM Lab data**. External sharing of this derived,
-aggregated subset requires sign-off from **Chris Lim** (the same gate the
-phxmob work sample cleared 2026-07-08) — **do not deploy before that sign-off.**
-Underlying data: NEMO transportation-sector emissions (EPA NEI 2017); BTS
-National Transportation Noise Map; HOLC grades via the University of Richmond
-Mapping Inequality project; ACS 2019 demographics.
+aggregated subset was **signed off by Chris Lim (2026-07-17)** (the same gate
+the phxmob work sample cleared 2026-07-08). **Keep the deployed app private
+until it is finished, then make it public.** Underlying data: NEMO
+transportation-sector emissions (EPA NEI 2017); BTS National Transportation
+Noise Map; HOLC grades via the University of Richmond Mapping Inequality
+project; ACS 2019 demographics.
