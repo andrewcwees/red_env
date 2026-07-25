@@ -86,8 +86,8 @@ ui <- page_sidebar(
       "Each polygon is a 1930s HOLC-graded neighborhood. Color shows present-day",
       "transportation-sector environmental exposure on a log scale (darker =",
       "higher). Hover a zone for its grade, exposure, and demographics.",
-      "Use the layer control (top-right of the map) to toggle the exposure fill",
-      "and the HOLC-grade outline independently."
+      "Use the layer control (top-right of the map) to switch between the",
+      "exposure and HOLC-grade fill views."
     ),
     helpText(
       HTML("<b>Chart:</b> exposure nationally, grouped by HOLC grade or by a",
@@ -179,7 +179,26 @@ server <- function(input, output, session) {
   output$map <- renderLeaflet({
     leaflet(options = leafletOptions(minZoom = 3)) |>
       addProviderTiles(providers$CartoDB.Positron) |>
-      setView(lng = -96, lat = 38, zoom = 4)
+      setView(lng = -96, lat = 38, zoom = 4) |>
+      # base-layer switches fire 'baselayerchange' (not the overlay events that
+      # drive leaflet's group-linked legends), so show only the active layer's
+      # legend manually; the MutationObserver re-applies when the proxy re-adds
+      # the legends after an input change.
+      htmlwidgets::onRender("
+        function(el) {
+          var map = this;
+          function apply(name) {
+            var exp = (name === 'Exposure');
+            el.querySelectorAll('.legend-exposure').forEach(function(e){ e.style.display = exp ? '' : 'none'; });
+            el.querySelectorAll('.legend-grade').forEach(function(e){ e.style.display = exp ? 'none' : ''; });
+          }
+          map.on('baselayerchange', function(e){ apply(e.name); });
+          new MutationObserver(function(){
+            var c = el.querySelector('.leaflet-control-layers-base input:checked');
+            apply(c ? c.parentNode.textContent.trim() : 'Exposure');
+          }).observe(el, { childList: true, subtree: true });
+        }
+      ")
   })
 
   observe({
@@ -209,26 +228,30 @@ server <- function(input, output, session) {
                                             bringToFront = TRUE),
         label = labs
       ) |>
-      # HOLC grade layer -- grade-colored outlines; invisible fill keeps the
-      # whole zone hoverable even when the exposure layer is switched off
+      # HOLC grade layer -- grade-colored fill choropleth (thin neutral border
+      # so adjacent same-grade zones stay separable)
       addPolygons(
         group = "HOLC grade",
-        fill = TRUE, fillOpacity = 0, fillColor = ~grade_col,
-        color = ~grade_col, weight = 2.5, opacity = 1,
-        highlightOptions = highlightOptions(weight = 4, color = "#333",
+        fillColor = ~grade_col, fillOpacity = 0.8,
+        color = "#666666", weight = 0.4, opacity = 0.8,
+        highlightOptions = highlightOptions(weight = 3, color = "#333",
                                             bringToFront = TRUE),
         label = labs
       ) |>
+      # mutually exclusive views -- two fill choropleths can't co-read when
+      # stacked, so switch between them (default: Exposure)
       addLayersControl(
-        overlayGroups = c("Exposure", "HOLC grade"),
+        baseGroups = c("Exposure", "HOLC grade"),
         options = layersControlOptions(collapsed = FALSE)
       ) |>
+      hideGroup("HOLC grade") |>
       addLegend("bottomright", pal = p, values = ~logxp,
                 title = "Exposure<br/><small>log(xp+1)</small>", opacity = 0.9,
-                group = "Exposure") |>
+                className = "info legend legend-exposure") |>
       addLegend("bottomleft", colors = unname(grade_cols),
                 labels = c("A", "B", "C", "D"),
-                title = "HOLC grade", opacity = 1, group = "HOLC grade") |>
+                title = "HOLC grade", opacity = 1,
+                className = "info legend legend-grade") |>
       fitBounds(bb[1], bb[2], bb[3], bb[4])
   })
 
