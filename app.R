@@ -57,7 +57,9 @@ equity_by <- c("HOLC grade"     = "grade",
 # demographic quintile ramp (low -> high value, yellow -> dark red)
 q_ramp <- colorRampPalette(c("#ffffcc", "#800026"))
 
-# city selector choices: "Birmingham, AL" -> "Birmingham, AL"
+# city selector choices: "Birmingham, AL" -> "Birmingham, AL"; plus a
+# national view that fills every city's zones at once
+NATIONAL <- "National (all cities)"
 city_choices <- setNames(cities$place, cities$place)
 
 # anchor finding text from the ranking table
@@ -126,7 +128,8 @@ server <- function(input, output, session) {
 
   # searchable city selector, default to the best-covered city
   default_city <- cities$place[which.max(cities$n_zones)]
-  updateSelectizeInput(session, "city", choices = city_choices,
+  updateSelectizeInput(session, "city",
+                       choices = c(setNames(NATIONAL, NATIONAL), city_choices),
                        selected = default_city, server = TRUE)
 
   poll_label   <- reactive(poll_lab[[input$poll]])
@@ -147,14 +150,20 @@ server <- function(input, output, session) {
   # selected city's zones joined to exposure
   city_zones <- reactive({
     req(input$city)
-    z <- zones[zones$place == input$city, ]
+    z <- if (input$city == NATIONAL) zones else zones[zones$place == input$city, ]
+    # a few HOLC zones are GEOMETRYCOLLECTIONs, which leaflet::addPolygons
+    # can't render; keep only their polygonal parts (no-op for POLYGON /
+    # MULTIPOLYGON zones, so per-city views are unaffected)
+    if (any(st_geometry_type(z) == "GEOMETRYCOLLECTION"))
+      z <- st_collection_extract(z, "POLYGON")
     left_join(z, exp_sel(), by = "HOLCID")
   })
 
   output$map_title <- renderText({
     req(input$city)
+    where <- if (input$city == NATIONAL) "All U.S. cities" else input$city
     sprintf("%s: %s %s exposure by HOLC zone",
-            input$city, sector_label(), poll_label())
+            where, sector_label(), poll_label())
   })
   eby_label <- reactive(names(equity_by)[equity_by == input$eby])
   output$chart_title <- renderText({
@@ -177,7 +186,7 @@ server <- function(input, output, session) {
 
   # ---- choropleth ----
   output$map <- renderLeaflet({
-    leaflet(options = leafletOptions(minZoom = 3)) |>
+    leaflet(options = leafletOptions(minZoom = 3, preferCanvas = TRUE)) |>
       addProviderTiles(providers$CartoDB.Positron) |>
       setView(lng = -96, lat = 38, zoom = 4) |>
       # base-layer switches fire 'baselayerchange' (not the overlay events that
@@ -259,8 +268,11 @@ server <- function(input, output, session) {
   #      with the selected city's zones overlaid as points --------------------
   output$equity <- renderPlot({
     eb  <- input$eby
+    national_view <- input$city == NATIONAL
     nat <- merge(exp_sel(), zattr, by = "HOLCID")
-    city <- merge(st_drop_geometry(city_zones())["HOLCID"], nat, by = "HOLCID")
+    # national view: boxes already ARE every zone, so skip the city overlay
+    city <- if (national_view) nat[0, ]
+            else merge(st_drop_geometry(city_zones())["HOLCID"], nat, by = "HOLCID")
 
     if (eb == "grade") {
       nat$bin  <- factor(nat$grade, levels = grade_levels)
@@ -286,8 +298,11 @@ server <- function(input, output, session) {
       scale_fill_manual(values = fills, guide = "none", drop = FALSE) +
       scale_x_discrete(drop = FALSE) +
       labs(x = xlab, y = "log(exposure + 1)",
-           subtitle = sprintf("Boxes: all U.S. graded zones. Points: %s.",
-                              input$city)) +
+           subtitle = if (national_view)
+                        "Boxes: all U.S. graded zones (national view)."
+                      else
+                        sprintf("Boxes: all U.S. graded zones. Points: %s.",
+                                input$city)) +
       theme_minimal(base_size = 13) +
       theme(panel.grid.major.x = element_blank())
   })
