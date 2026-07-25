@@ -85,7 +85,9 @@ ui <- page_sidebar(
     helpText(
       "Each polygon is a 1930s HOLC-graded neighborhood. Color shows present-day",
       "transportation-sector environmental exposure on a log scale (darker =",
-      "higher). Hover a zone for its grade, exposure, and demographics."
+      "higher). Hover a zone for its grade, exposure, and demographics.",
+      "Use the layer control (top-right of the map) to toggle the exposure fill",
+      "and the HOLC-grade outline independently."
     ),
     helpText(
       HTML("<b>Chart:</b> exposure nationally, grouped by HOLC grade or by a",
@@ -195,19 +197,35 @@ server <- function(input, output, session) {
     bb <- as.numeric(st_bbox(z))
     leafletProxy("map", data = z) |>
       clearShapes() |> clearControls() |>
+      # Exposure layer -- fill choropleth (thin neutral border)
       addPolygons(
-        # fill = exposure level; outline = HOLC grade (grade overlaid on exposure)
-        fillColor = ~p(logxp), fillOpacity = 0.75,
-        color = ~grade_cols[grade], weight = 2, opacity = 1,
+        group = "Exposure",
+        fillColor = ~p(logxp), fillOpacity = 0.8,
+        color = "#888888", weight = 0.4, opacity = 0.8,
+        highlightOptions = highlightOptions(weight = 3, color = "#333",
+                                            bringToFront = TRUE),
+        label = labs
+      ) |>
+      # HOLC grade layer -- grade-colored outlines; invisible fill keeps the
+      # whole zone hoverable even when the exposure layer is switched off
+      addPolygons(
+        group = "HOLC grade",
+        fill = TRUE, fillOpacity = 0,
+        color = ~grade_cols[grade], weight = 2.5, opacity = 1,
         highlightOptions = highlightOptions(weight = 4, color = "#333",
                                             bringToFront = TRUE),
         label = labs
       ) |>
+      addLayersControl(
+        overlayGroups = c("Exposure", "HOLC grade"),
+        options = layersControlOptions(collapsed = FALSE)
+      ) |>
       addLegend("bottomright", pal = p, values = ~logxp,
-                title = "log(exposure+1)<br/><small>fill</small>", opacity = 0.9) |>
+                title = "Exposure<br/><small>log(xp+1)</small>", opacity = 0.9,
+                group = "Exposure") |>
       addLegend("bottomleft", colors = unname(grade_cols),
                 labels = c("A (best)", "B", "C", "D (hazardous)"),
-                title = "HOLC grade<br/><small>outline</small>", opacity = 1) |>
+                title = "HOLC grade", opacity = 1, group = "HOLC grade") |>
       fitBounds(bb[1], bb[2], bb[3], bb[4])
   })
 
