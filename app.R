@@ -196,14 +196,18 @@ server <- function(input, output, session) {
     leafletProxy("map", data = z) |>
       clearShapes() |> clearControls() |>
       addPolygons(
-        fillColor = ~p(logxp), fillOpacity = 0.8, weight = 0.6,
-        color = ~grade_cols[grade],
-        highlightOptions = highlightOptions(weight = 2.5, color = "#333",
+        # fill = exposure level; outline = HOLC grade (grade overlaid on exposure)
+        fillColor = ~p(logxp), fillOpacity = 0.75,
+        color = ~grade_cols[grade], weight = 2, opacity = 1,
+        highlightOptions = highlightOptions(weight = 4, color = "#333",
                                             bringToFront = TRUE),
         label = labs
       ) |>
       addLegend("bottomright", pal = p, values = ~logxp,
-                title = "log(exposure+1)", opacity = 0.9) |>
+                title = "log(exposure+1)<br/><small>fill</small>", opacity = 0.9) |>
+      addLegend("bottomleft", colors = unname(grade_cols),
+                labels = c("A (best)", "B", "C", "D (hazardous)"),
+                title = "HOLC grade<br/><small>outline</small>", opacity = 1) |>
       fitBounds(bb[1], bb[2], bb[3], bb[4])
   })
 
