@@ -106,7 +106,7 @@ ui <- page_sidebar(
     fill = FALSE,
     value_box(title = "Grade D vs. A exposure (national)",
               value = textOutput("vb_ratio"), theme = "primary"),
-    value_box(title = "Zones mapped in city",
+    value_box(title = textOutput("vb_n_title", inline = TRUE),
               value = textOutput("vb_n"), theme = "secondary"),
     value_box(title = "Most stratified sector",
               value = textOutput("vb_rail"), theme = "light")
@@ -126,11 +126,10 @@ ui <- page_sidebar(
 # ---- server -----------------------------------------------------------------
 server <- function(input, output, session) {
 
-  # searchable city selector, default to the best-covered city
-  default_city <- cities$place[which.max(cities$n_zones)]
+  # searchable city selector, defaulting to the national (all cities) view
   updateSelectizeInput(session, "city",
                        choices = c(setNames(NATIONAL, NATIONAL), city_choices),
-                       selected = default_city, server = TRUE)
+                       selected = NATIONAL, server = TRUE)
 
   poll_label   <- reactive(poll_lab[[input$poll]])
   sector_label <- reactive(tolower(input$sector))
@@ -182,6 +181,10 @@ server <- function(input, output, session) {
     if (is.na(mA) || mA == 0) "n/a" else sprintf("%.2fx", mD / mA)
   })
   output$vb_n   <- renderText(format(nrow(city_zones()), big.mark = ","))
+  output$vb_n_title <- renderText({
+    req(input$city)
+    if (input$city == NATIONAL) "Zones mapped (national)" else "Zones mapped in city"
+  })
   output$vb_rail <- renderText(sprintf("Rail (%.0f%%)", rail_pct))
 
   # ---- choropleth ----
@@ -267,6 +270,7 @@ server <- function(input, output, session) {
   # ---- equity chart: national distribution by grade or demographic quintile,
   #      with the selected city's zones overlaid as points --------------------
   output$equity <- renderPlot({
+    req(input$city)
     eb  <- input$eby
     national_view <- input$city == NATIONAL
     nat <- merge(exp_sel(), zattr, by = "HOLCID")
