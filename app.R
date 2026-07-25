@@ -248,7 +248,7 @@ server <- function(input, output, session) {
       addLegend("bottomright", pal = p, values = ~logxp,
                 title = "Exposure<br/><small>log(xp+1)</small>", opacity = 0.9,
                 className = "info legend legend-exposure") |>
-      addLegend("bottomleft", colors = unname(grade_cols),
+      addLegend("bottomright", colors = unname(grade_cols),
                 labels = c("A", "B", "C", "D"),
                 title = "HOLC grade", opacity = 1,
                 className = "info legend legend-grade") |>
