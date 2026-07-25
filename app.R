@@ -185,6 +185,9 @@ server <- function(input, output, session) {
   observe({
     z  <- city_zones()
     p  <- pal()
+    # per-zone grade color as a PLAIN (unnamed) vector -- a named vector
+    # serializes to a JS object and every polygon renders as "[object Object]"
+    z$grade_col <- unname(grade_cols[as.character(z$grade)])
     labs <- sprintf(
       paste0("<b>HOLC grade %s</b><br/>%s %s exposure: <b>%.3f</b><br/>",
              "Median income: <b>%s</b><br/>%% Hispanic: <b>%s</b> &middot; ",
@@ -210,8 +213,8 @@ server <- function(input, output, session) {
       # whole zone hoverable even when the exposure layer is switched off
       addPolygons(
         group = "HOLC grade",
-        fill = TRUE, fillOpacity = 0,
-        color = ~grade_cols[grade], weight = 2.5, opacity = 1,
+        fill = TRUE, fillOpacity = 0, fillColor = ~grade_col,
+        color = ~grade_col, weight = 2.5, opacity = 1,
         highlightOptions = highlightOptions(weight = 4, color = "#333",
                                             bringToFront = TRUE),
         label = labs
@@ -224,7 +227,7 @@ server <- function(input, output, session) {
                 title = "Exposure<br/><small>log(xp+1)</small>", opacity = 0.9,
                 group = "Exposure") |>
       addLegend("bottomleft", colors = unname(grade_cols),
-                labels = c("A (best)", "B", "C", "D (hazardous)"),
+                labels = c("A", "B", "C", "D"),
                 title = "HOLC grade", opacity = 1, group = "HOLC grade") |>
       fitBounds(bb[1], bb[2], bb[3], bb[4])
   })
