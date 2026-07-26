@@ -112,7 +112,7 @@ ui <- page_sidebar(
   ),
   layout_columns(
     fill = FALSE,
-    value_box(title = "Grade D vs. A exposure (national)",
+    value_box(title = "Grade D vs. A intensity (zones with exposure)",
               value = textOutput("vb_ratio"), theme = "primary"),
     value_box(title = textOutput("vb_n_title", inline = TRUE),
               value = textOutput("vb_n"), theme = "secondary"),
@@ -201,12 +201,16 @@ server <- function(input, output, session) {
   })
 
   # ---- value boxes ----
+  # Intensity ratio only -- medians over zones that HAVE exposure, matching the
+  # equity chart's boxes. Pooling in the zeros would report presence x intensity
+  # as though it were intensity alone (rail noise: 19.1x pooled vs 3.0x here).
   output$vb_ratio <- renderText({
     e <- merge(exp_sel(),
                as.data.frame(zones)[, c("HOLCID", "grade")], by = "HOLCID")
+    e <- e[!is.na(e$xp) & e$xp > 0, ]
     mA <- median(e$xp[e$grade == "A"], na.rm = TRUE)
     mD <- median(e$xp[e$grade == "D"], na.rm = TRUE)
-    if (is.na(mA) || mA == 0) "n/a" else sprintf("%.2fx", mD / mA)
+    if (is.na(mA) || is.na(mD) || mA == 0) "n/a" else sprintf("%.2fx", mD / mA)
   })
   output$vb_n   <- renderText(format(nrow(city_zones()), big.mark = ","))
   output$vb_n_title <- renderText({
@@ -339,19 +343,40 @@ server <- function(input, output, session) {
       xlab  <- sprintf("%s quintile (Q1 = lowest, Q5 = highest)", eby_label())
     }
 
+    # Presence and intensity are separate disparities and pooling them distorts
+    # both. A zone with no measurable exposure is not a low-exposure zone, and
+    # the zero share is itself steeply graded (rail noise: 36.5% of grade-A
+    # zones vs 13.8% of grade-D). Pooling drags grade A toward the floor and
+    # inflates the rail-noise D:A ratio from 3.0x to 19.1x. So: boxes show
+    # intensity among zones that have exposure, labels show the share with none.
+    zero_tab <- aggregate(list(pct_zero = nat$xp == 0), list(bin = nat$bin), mean)
+    nat  <- nat[!is.na(nat$xp) & nat$xp > 0, ]
+    city <- city[!is.na(city$xp) & city$xp > 0, ]
+    validate(need(nrow(nat) > 0,
+                  "No zone in this view has measurable exposure for this sector and pollutant."))
+
+    # reserve a strip beneath the boxes for the zero-share labels
+    y_rng <- range(nat$logxp, na.rm = TRUE)
+    y_lab <- y_rng[1] - 0.11 * max(diff(y_rng), 1e-6)
+
     ggplot(nat, aes(x = bin, y = logxp)) +
       geom_boxplot(aes(fill = bin), outlier.size = 0.5, width = 0.6,
                    alpha = 0.85, colour = "grey30") +
       geom_jitter(data = city, width = 0.15, height = 0, size = 1.6,
                   colour = "#111111", alpha = 0.8) +
+      geom_text(data = zero_tab, inherit.aes = FALSE,
+                aes(x = bin, y = y_lab,
+                    label = sprintf("%.0f%% none", 100 * pct_zero)),
+                size = 3.1, colour = "grey35") +
       scale_fill_manual(values = fills, guide = "none", drop = FALSE) +
       scale_x_discrete(drop = FALSE) +
-      labs(x = xlab, y = "log(exposure + 1)",
-           subtitle = if (national_view)
-                        "Boxes: all U.S. graded zones (national view)."
-                      else
-                        sprintf("Boxes: all U.S. graded zones. Points: %s.",
-                                input$city)) +
+      expand_limits(y = y_lab - 0.06 * max(diff(y_rng), 1e-6)) +
+      labs(x = xlab, y = "log(exposure + 1), zones with exposure",
+           # city goes on its own line -- appended inline it clips at the panel edge
+           subtitle = paste0(
+             "Boxes: intensity among zones with measurable exposure. ",
+             "Labels: share with none.",
+             if (national_view) "" else sprintf("\nPoints: %s.", input$city))) +
       theme_minimal(base_size = 13) +
       theme(panel.grid.major.x = element_blank())
   })
