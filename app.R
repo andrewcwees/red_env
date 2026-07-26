@@ -49,6 +49,14 @@ grade_levels <- c("A", "B", "C", "D")
 # canonical HOLC grade colors (green/blue/yellow/red)
 grade_cols <- c(A = "#76a865", B = "#7cb5bd", C = "#ffff00", D = "#d9838d")
 
+# A zero is "no measurable exposure", not "low exposure", and it is common:
+# 22% of zones for rail noise, 8-10% for rail NO/NO2/PM2.5. Since logxp is
+# log1p(xp), a zero maps to logxp = 0 and would sit at the bottom of a
+# continuous ramp -- visually identical to a genuinely low nonzero value. So
+# zeros get their own color and the ramp is fitted to nonzero values only.
+zero_col <- "#b8b8b8"
+na_col   <- "#f0f0f0"
+
 # equity chart: group exposure by HOLC grade (default) or a demographic quintile
 equity_by <- c("HOLC grade"     = "grade",
                "Median income"  = "inc",
@@ -140,11 +148,31 @@ server <- function(input, output, session) {
         c("HOLCID", "xp", "logxp")]
   })
 
-  # national logxp domain -> colors comparable across cities
-  pal <- reactive({
+  # national NONZERO logxp values -- the ramp domain and the legend range. Using
+  # the national (not per-city) spread keeps colors comparable across cities;
+  # dropping zeros keeps the mass of no-exposure zones from compressing the ramp.
+  nz_vals <- reactive({
     v <- exp_sel()$logxp
-    colorNumeric("YlOrRd", domain = v, na.color = "#cccccc")
+    v[!is.na(v) & v > 0]
   })
+
+  pal <- reactive({
+    v <- nz_vals()
+    if (!length(v) || min(v) == max(v)) return(NULL)   # no ramp to draw
+    colorNumeric("YlOrRd", domain = v, na.color = na_col)
+  })
+
+  # per-zone fill: zero -> grey, unmatched -> near-white, else the ramp. Returns
+  # a PLAIN (unnamed) vector -- a named one serializes to a JS object and every
+  # polygon renders as "[object Object]".
+  fill_exposure <- function(z, p) {
+    out  <- rep(na_col, nrow(z))
+    have <- !is.na(z$xp)
+    nz   <- have & z$xp > 0
+    if (!is.null(p) && any(nz)) out[nz] <- p(z$logxp[nz])
+    out[have & z$xp == 0] <- zero_col
+    unname(out)
+  }
 
   # selected city's zones joined to exposure
   city_zones <- reactive({
@@ -219,22 +247,27 @@ server <- function(input, output, session) {
     # per-zone grade color as a PLAIN (unnamed) vector -- a named vector
     # serializes to a JS object and every polygon renders as "[object Object]"
     z$grade_col <- unname(grade_cols[as.character(z$grade)])
+    z$exp_col   <- fill_exposure(z, p)
+    # a zero zone reads "none measured", not "0.000" -- the number invites the
+    # reader to treat it as a small measurement rather than an absence
+    xp_txt <- ifelse(is.na(z$xp), "n/a",
+                     ifelse(z$xp == 0, "none measured", sprintf("%.3f", z$xp)))
     labs <- sprintf(
-      paste0("<b>HOLC grade %s</b><br/>%s %s exposure: <b>%.3f</b><br/>",
+      paste0("<b>HOLC grade %s</b><br/>%s %s exposure: <b>%s</b><br/>",
              "Median income: <b>%s</b><br/>%% Hispanic: <b>%s</b> &middot; ",
              "%% Black: <b>%s</b>"),
-      z$grade, sector_label(), poll_label(), z$xp,
+      z$grade, sector_label(), poll_label(), xp_txt,
       dollar(z$inc, accuracy = 1),
       percent(z$pct_hisp, accuracy = 1), percent(z$pct_blk, accuracy = 1)
     ) |> lapply(htmltools::HTML)
 
     bb <- as.numeric(st_bbox(z))
-    leafletProxy("map", data = z) |>
+    prox <- leafletProxy("map", data = z) |>
       clearShapes() |> clearControls() |>
       # Exposure layer -- fill choropleth (thin neutral border)
       addPolygons(
         group = "Exposure",
-        fillColor = ~p(logxp), fillOpacity = 0.8,
+        fillColor = ~exp_col, fillOpacity = 0.8,
         color = "#888888", weight = 0.4, opacity = 0.8,
         highlightOptions = highlightOptions(weight = 3, color = "#333",
                                             bringToFront = TRUE),
@@ -256,10 +289,22 @@ server <- function(input, output, session) {
         baseGroups = c("Exposure", "HOLC grade"),
         options = layersControlOptions(collapsed = FALSE)
       ) |>
-      hideGroup("HOLC grade") |>
-      addLegend("bottomright", pal = p, values = ~logxp,
-                title = "Exposure<br/><small>log(xp+1)</small>", opacity = 0.9,
-                className = "info legend legend-exposure") |>
+      hideGroup("HOLC grade")
+
+    # exposure legends: the ramp (nonzero only), then the zero swatch. Both are
+    # classed legend-exposure so the baselayerchange handler toggles them together.
+    if (!is.null(p))
+      prox <- prox |>
+        addLegend("bottomright", pal = p, values = nz_vals(),
+                  title = "Exposure<br/><small>log(xp+1)</small>", opacity = 0.9,
+                  className = "info legend legend-exposure")
+    if (any(!is.na(z$xp) & z$xp == 0))
+      prox <- prox |>
+        addLegend("bottomright", colors = zero_col,
+                  labels = "No measurable exposure", opacity = 0.9,
+                  className = "info legend legend-exposure")
+
+    prox |>
       addLegend("bottomright", colors = unname(grade_cols),
                 labels = c("A", "B", "C", "D"),
                 title = "HOLC grade", opacity = 1,
