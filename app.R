@@ -6,17 +6,25 @@
 # transportation-sector environmental exposure across neighborhoods graded by
 # the 1930s HOLC ("redlining") maps, and shows how exposure tracks HOLC grade.
 #
-#   * Map        -> a city's HOLC zones colored by exposure (log scale) for a
-#                   chosen transportation sector x pollutant.
-#   * Equity     -> national exposure distribution across HOLC grades A-D for
-#                   that sector x pollutant, with the selected city overlaid.
-#   * Value boxes-> Grade D-vs-A exposure ratio, zones mapped, and the anchor
-#                   finding (rail is the most stratified sector).
+#   * Map        -> HOLC zones filled by exposure (log scale) or by HOLC grade,
+#                   for a chosen transportation sector x pollutant. Zones with
+#                   no measurable exposure get their own color, not the bottom
+#                   of the ramp.
+#   * Equity     -> national distribution across HOLC grades A-D (or a
+#                   demographic quintile) for that sector x pollutant, with the
+#                   selected city overlaid. Reports presence and intensity
+#                   separately: boxes cover zones that HAVE exposure, labels
+#                   give each group's share with none. Both track grade, and
+#                   pooling them overstates the intensity gradient.
+#   * Value boxes-> Grade D-vs-A intensity ratio (same basis as the chart),
+#                   zones mapped, and the anchor finding (rail is the most
+#                   stratified sector).
 #
 # Scope is deliberately hedged (see interactive_display_plan_2026-07-14.md):
-# Rail + Road only (Aviation excluded -- mostly-zero), no combined index (CEI),
-# descriptive framing only -- no causal claims. This is a work sample, not a
-# published result.
+# Rail + Road for now (Aviation not yet baked into the bundle; ~65% of zones
+# have none, so it needs the presence/intensity treatment above), no combined
+# index (CEI), descriptive framing only -- no causal claims. This is a work
+# sample, not a published result.
 #
 # Self-contained: reads only redenv_data.rds (baked by prep_data.R). Run with:
 #   shiny::runApp()

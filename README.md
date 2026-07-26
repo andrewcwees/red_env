@@ -17,25 +17,40 @@ dashboarding.
 Pick a **city** (searchable, 200 cities), a **transportation sector**, and a
 **pollutant / measure**:
 
-- **Map** (`leaflet` choropleth) — the selected city's HOLC zones colored by
-  exposure on a **log scale** (darker = higher), outlined by HOLC grade
-  (green A → red D). Hover a zone for its grade, exposure, and demographics.
+- **Map** (`leaflet` choropleth) — two mutually exclusive fill views, switched
+  with the layer control: **Exposure** (log scale, darker = higher) and **HOLC
+  grade** (green A → red D). Each carries its own legend. Zones with **no
+  measurable exposure** are drawn in a separate grey rather than at the bottom
+  of the ramp, so an absence never reads as a low value. Hover a zone for its
+  grade, exposure, and demographics. A **National (all cities)** view fills all
+  8,836 graded zones at once and is the default.
 - **Equity chart** (`ggplot2`) — the national exposure distribution grouped by
   **HOLC grade** (default) or, via a toggle, by **demographic quintile**
   (median income, % Hispanic, % Black), with the selected city's zones
-  overlaid as points. This is the disparity story: exposure rises from grade A
-  to grade D, and tracks lower income / higher minority share.
-- **Value boxes** — national **Grade D-vs-A exposure ratio** for the current
-  sector × pollutant, **zones mapped** in the city, and the anchor finding:
-  **rail is the most stratified transportation sector** (ranks #1 in 61% of
-  sector × measure comparisons).
+  overlaid as points.
+
+  The chart reports **two disparities separately**, because they compound and
+  pooling them is misleading. The boxes show **intensity** among zones that
+  have measurable exposure; the row beneath shows each group's **share with
+  none**. Both track HOLC grade: for rail noise, 36% of grade-A zones have no
+  measurable exposure against 14% of grade-D zones, and among zones that do
+  have it, grade D carries **3.0×** the exposure of grade A.
+- **Value boxes** — the national **Grade D-vs-A intensity ratio** for the
+  current sector × pollutant (computed over zones with exposure, so it matches
+  the chart), **zones mapped**, and the anchor finding: **rail is the most
+  stratified transportation sector** (ranks #1 in 61% of sector × measure
+  comparisons).
 
 ## Scope (deliberately hedged)
 This is a descriptive work sample, not a published or causal result, and it
 carries the project's documented data-quality limits by design:
 
-- **Rail + Road only.** Aviation is excluded — 63–69% of HOLC zones have zero
-  aviation exposure, so an aviation choropleth is mostly empty and misleading.
+- **Rail + Road only, for now.** Aviation is not in the baked bundle yet.
+  Roughly 65% of HOLC zones have no measurable aviation exposure, so it needs
+  the presence/intensity treatment described above rather than a plain
+  choropleth. It is being added rather than dropped: excluding a sector because
+  it shows a weaker gradient would make "rail is the most stratified sector"
+  partly an artifact of which sectors were displayed.
 - **No combined exposure index (CEI)** — the combined index is structurally
   unreliable and is omitted entirely.
 - **Per-city exploration + a durable national finding**, not a single national
