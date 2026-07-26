@@ -41,9 +41,11 @@ zattr  <- st_drop_geometry(zones)   # zone grade + demographics, no geometry
 
 # ---- lookups ----------------------------------------------------------------
 sectors    <- c("Rail" = "Rail", "Road" = "Road")
+# NB: names are UI labels, values must match the data's pollutant levels
+# exactly -- the data spells it "PM25", so a "PM2.5" value selects nothing.
 pollutants <- c("Noise (LAeq,24)" = "Noise", "NO" = "NO", "NO2" = "NO2",
-                "PM2.5" = "PM2.5")
-poll_lab   <- c(Noise = "noise", NO = "NO", NO2 = "NO2", PM2.5 = "PM2.5")
+                "PM2.5" = "PM25")
+poll_lab   <- c(Noise = "noise", NO = "NO", NO2 = "NO2", PM25 = "PM2.5")
 
 grade_levels <- c("A", "B", "C", "D")
 # canonical HOLC grade colors (green/blue/yellow/red)
@@ -323,6 +325,10 @@ server <- function(input, output, session) {
     eb  <- input$eby
     national_view <- input$city == NATIONAL
     nat <- merge(exp_sel(), zattr, by = "HOLCID")
+    # guard before the quantile binning below, which fails obscurely ("invalid
+    # number of intervals") rather than usefully on an empty slice
+    validate(need(nrow(nat) > 0,
+                  "No exposure data for this sector and pollutant."))
     # national view: boxes already ARE every zone, so skip the city overlay
     city <- if (national_view) nat[0, ]
             else merge(st_drop_geometry(city_zones())["HOLCID"], nat, by = "HOLCID")
