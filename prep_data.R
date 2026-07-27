@@ -14,14 +14,23 @@
 #   zones  - one sf POLYGON row per HOLC zone: HOLCID, place, city, state,
 #            grade + zone demographics; simplified, EPSG:4326
 #   exp    - HOLCID x sector x pollutant -> xp, logxp
-#            (Rail + Road only; NO CEI, NO Aviation, NO Total -- known defects)
+#            (Rail + Road + Aviation; NO CEI, NO Total -- CEI is structurally
+#            broken, Total is a sum of the three and carries no separate story)
 #   cities - searchable city selector table (place, city, state, n_zones)
 #   rank   - sector first-place ranking summary (the anchor finding)
 #
 # Hard constraints baked in here (see interactive_display_plan_2026-07-14.md):
-#   * Rail + Road sectors only; Aviation excluded (63-69% zero zones).
 #   * No CEI in any form (structurally broken combined index).
 #   * logxp is the coloring scale for every pollutant (tail concentration).
+#   * Aviation is INCLUDED. It is zero-inflated (63-69% of zones have none, vs
+#     8-22% for rail and 0% for road), which is why it was held back, but the
+#     app now reports presence and intensity separately, so the zeros are shown
+#     as an absence rather than folded into the ramp. Dropping a sector because
+#     its gradient is weaker or messier would make the "rail is the most
+#     stratified sector" claim partly an artifact of which sectors were shown --
+#     and aviation is not in fact weak: it out-ranks road on the sector
+#     stratification tally (22% vs 17% of first-place finishes), it just
+#     disagrees in direction (its income and race gradients flip sign).
 #
 # Source data are unpublished HUM Lab work; externalizing this derived subset
 # was signed off by Chris Lim (2026-07-17; same gate phxmob cleared 2026-07-08).
@@ -34,7 +43,7 @@ sf_use_s2(FALSE)  # crosswalk polygons trip s2 on a few degenerate edges
 app_dir <- "C:/Users/andre/Desktop/box/projects/life/job-search/portfolio-shiny-redenv"
 d_out   <- "D:/research/redenv/data/output"
 
-keep_sectors    <- c("Rail", "Road")
+keep_sectors    <- c("Rail", "Road", "Aviation")
 drop_pollutants <- c("CEI")
 min_zones       <- 5  # drop thin-coverage cities (< min_zones graded zones)
 

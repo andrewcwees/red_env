@@ -23,7 +23,9 @@ Pick a **city** (searchable, 200 cities), a **transportation sector**, and a
   measurable exposure** are drawn in a separate grey rather than at the bottom
   of the ramp, so an absence never reads as a low value. Hover a zone for its
   grade, exposure, and demographics. A **National (all cities)** view fills all
-  8,836 graded zones at once and is the default.
+  8,836 graded zones at once and is the default. If no zone in the current view
+  has any measurable exposure (common for aviation), the header says so instead
+  of leaving an unexplained grey map.
 - **Equity chart** (`ggplot2`) — the national exposure distribution grouped by
   **HOLC grade** (default) or, via a toggle, by **demographic quintile**
   (median income, % Hispanic, % Black), with the selected city's zones
@@ -45,12 +47,20 @@ Pick a **city** (searchable, 200 cities), a **transportation sector**, and a
 This is a descriptive work sample, not a published or causal result, and it
 carries the project's documented data-quality limits by design:
 
-- **Rail + Road only, for now.** Aviation is not in the baked bundle yet.
-  Roughly 65% of HOLC zones have no measurable aviation exposure, so it needs
-  the presence/intensity treatment described above rather than a plain
-  choropleth. It is being added rather than dropped: excluding a sector because
-  it shows a weaker gradient would make "rail is the most stratified sector"
-  partly an artifact of which sectors were displayed.
+- **All three sectors are shown — rail, road, and aviation.** Aviation is
+  sparse: 63–70% of HOLC zones have no measurable aviation exposure (against
+  8–22% for rail and 0% for road), and 54 of the 200 cities have none at all,
+  so their map is legitimately blank and says so. It is included rather than
+  dropped, because excluding a sector for having a weaker or messier gradient
+  would make "rail is the most stratified sector" partly an artifact of which
+  sectors were displayed. Aviation's own profile is genuinely mixed and the
+  presence/intensity split is what makes it readable: **presence** is graded
+  (70% of grade-A zones have no aviation NO exposure against 59% of grade-D),
+  while **intensity** among zones that have it is close to flat (D:A 1.0–1.3×,
+  comparable to road, well below rail's 2.6–3.0×). Its demographic gradients
+  also point the opposite way from the other sectors — aviation noise carries
+  the strongest %Hispanic gradient of any sector × pollutant in the project,
+  but its income gradient runs positive where rail's and road's run negative.
 - **No combined exposure index (CEI)** — the combined index is structurally
   unreliable and is omitted entirely.
 - **Per-city exploration + a durable national finding**, not a single national

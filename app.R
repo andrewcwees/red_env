@@ -21,10 +21,16 @@
 #                   stratified sector).
 #
 # Scope is deliberately hedged (see interactive_display_plan_2026-07-14.md):
-# Rail + Road for now (Aviation not yet baked into the bundle; ~65% of zones
-# have none, so it needs the presence/intensity treatment above), no combined
-# index (CEI), descriptive framing only -- no causal claims. This is a work
-# sample, not a published result.
+# Rail + Road + Aviation, no combined index (CEI), descriptive framing only --
+# no causal claims. This is a work sample, not a published result.
+#
+# Aviation is included even though it is heavily zero-inflated (~65% of zones
+# have no measurable aviation exposure, against 8-22% for rail and 0% for road).
+# The presence/intensity split above is what makes that reportable: the zeros
+# read as an absence, not as a low value. Its gradients also disagree with the
+# other two sectors -- aviation noise has the strongest %Hispanic gradient of
+# any sector x pollutant here, while its income gradient runs the opposite way
+# from rail and road. That disagreement is a finding, not a reason to omit it.
 #
 # Self-contained: reads only redenv_data.rds (baked by prep_data.R). Run with:
 #   shiny::runApp()
@@ -48,7 +54,7 @@ rank   <- d$rank
 zattr  <- st_drop_geometry(zones)   # zone grade + demographics, no geometry
 
 # ---- lookups ----------------------------------------------------------------
-sectors    <- c("Rail" = "Rail", "Road" = "Road")
+sectors    <- c("Rail" = "Rail", "Road" = "Road", "Aviation" = "Aviation")
 # NB: names are UI labels, values must match the data's pollutant levels
 # exactly -- the data spells it "PM25", so a "PM2.5" value selects nothing.
 pollutants <- c("Noise (LAeq,24)" = "Noise", "NO" = "NO", "NO2" = "NO2",
@@ -60,10 +66,12 @@ grade_levels <- c("A", "B", "C", "D")
 grade_cols <- c(A = "#76a865", B = "#7cb5bd", C = "#ffff00", D = "#d9838d")
 
 # A zero is "no measurable exposure", not "low exposure", and it is common:
-# 22% of zones for rail noise, 8-10% for rail NO/NO2/PM2.5. Since logxp is
-# log1p(xp), a zero maps to logxp = 0 and would sit at the bottom of a
-# continuous ramp -- visually identical to a genuinely low nonzero value. So
-# zeros get their own color and the ramp is fitted to nonzero values only.
+# 63-69% of zones for aviation, 22% for rail noise, 8-10% for rail
+# NO/NO2/PM2.5. Since logxp is log1p(xp), a zero maps to logxp = 0 and would sit
+# at the bottom of a continuous ramp -- visually identical to a genuinely low
+# nonzero value. So zeros get their own color and the ramp is fitted to nonzero
+# values only. For aviation this is the difference between a readable map and a
+# misleading one: most of the country simply has no airport near it.
 zero_col <- "#b8b8b8"
 na_col   <- "#f0f0f0"
 
@@ -92,7 +100,7 @@ ui <- page_sidebar(
     width = 330,
     selectizeInput(
       "city", "City", choices = NULL,  # populated server-side (searchable)
-      options = list(placeholder = "Type to search 221 cities...",
+      options = list(placeholder = "Type to search 200 cities...",
                      maxOptions = 300)
     ),
     radioButtons("sector", "Transportation sector", choices = sectors,
@@ -115,8 +123,10 @@ ui <- page_sidebar(
            "the selected city's zones overlaid &mdash; the disparity story.")
     ),
     helpText(HTML(paste(
-      "<small>Rail + Road only; aviation and any combined index are excluded as",
-      "unreliable. Source: redenv (Weesner &amp; Lim, UA). NEMO emissions (EPA",
+      "<small>All three transportation sectors are shown. Aviation is sparse",
+      "&mdash; about 65% of zones have no measurable aviation exposure, so read",
+      "its &ldquo;% none&rdquo; row alongside its boxes. No combined index (CEI)",
+      "is reported. Source: redenv (Weesner &amp; Lim, UA). NEMO emissions (EPA",
       "NEI 2017); BTS noise; HOLC via Mapping Inequality; ACS 2019. Work sample",
       "&mdash; descriptive, not a published or causal result.</small>")))
   ),
@@ -131,7 +141,8 @@ ui <- page_sidebar(
   ),
   card(
     full_screen = TRUE, height = 540,
-    card_header(textOutput("map_title", inline = TRUE)),
+    card_header(textOutput("map_title", inline = TRUE),
+                uiOutput("map_note", inline = TRUE)),
     leafletOutput("map", height = 500)
   ),
   card(
@@ -202,6 +213,19 @@ server <- function(input, output, session) {
     sprintf("%s: %s %s exposure by HOLC zone",
             where, sector_label(), poll_label())
   })
+  # An all-grey map is a correct answer, not a broken one, but it does not look
+  # like one. 54 of the 200 cities have no zone with any measurable aviation
+  # exposure, so say so in the header rather than leaving the reader to guess.
+  output$map_note <- renderUI({
+    z <- city_zones()
+    if (any(!is.na(z$xp) & z$xp > 0)) return(NULL)
+    tags$span(
+      style = "color:#996600; font-weight:400;",
+      sprintf(" — no zone here has measurable %s %s exposure",
+              sector_label(), poll_label())
+    )
+  })
+
   eby_label <- reactive(names(equity_by)[equity_by == input$eby])
   output$chart_title <- renderText({
     grp <- if (input$eby == "grade") "HOLC grades"
