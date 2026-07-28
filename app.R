@@ -70,9 +70,13 @@ zattr  <- st_drop_geometry(zones)   # zone grade + demographics, no geometry
 sectors    <- c("Rail" = "Rail", "Road" = "Road", "Aviation" = "Aviation")
 # NB: names are UI labels, values must match the data's pollutant levels
 # exactly -- the data spells it "PM25", so a "PM2.5" value selects nothing.
-pollutants <- c("Noise (LAeq,24)" = "Noise", "NO" = "NO", "NO2" = "NO2",
-                "PM2.5" = "PM25")
-poll_lab   <- c(Noise = "noise", NO = "NO", NO2 = "NO2", PM25 = "PM2.5")
+# The subscript is the Unicode character U+2082, not markup: selectInput does
+# not render HTML in its choice labels, and a <sub> tag would show literally.
+pollutants <- c("Noise (LAeq,24)"         = "Noise",
+                "Nitrogen Oxide (NO)"     = "NO",
+                "Nitrogen Dioxide (NO₂)" = "NO2",
+                "Fine Particulate Matter (PM2.5)" = "PM25")
+poll_lab   <- c(Noise = "noise", NO = "NO", NO2 = "NO₂", PM25 = "PM2.5")
 
 grade_levels <- c("A", "B", "C", "D")
 # canonical HOLC grade colors (green/blue/yellow/red)
@@ -144,12 +148,10 @@ ui <- page_sidebar(
                                            nrow(cities)),
                      maxOptions = 300)
     ),
-    radioButtons("sector", "Transportation sector", choices = sectors,
-                 selected = "Rail", inline = TRUE),
-    selectInput("poll", "Pollutant / measure", choices = pollutants,
+    selectInput("sector", "Emission Source", choices = sectors,
+                selected = "Rail"),
+    selectInput("poll", "Emission Type", choices = pollutants,
                 selected = "Noise"),
-    selectInput("eby", "Equity chart: group exposure by", choices = equity_by,
-                selected = "grade"),
     radioButtons("basemap", "Basemap", choices = basemaps,
                  selected = "light", inline = TRUE),
     # Satellite is unreadable under an opaque choropleth, so the fill has to be
@@ -169,18 +171,31 @@ ui <- page_sidebar(
       "what the infrastructure driving the exposure actually is."
     ),
     helpText(
-      HTML("<b>Chart:</b> exposure nationally, grouped by HOLC grade or by a",
-           "demographic quintile (income, %&nbsp;Hispanic, %&nbsp;Black), with",
-           "the selected city's zones overlaid &mdash; the disparity story.")
+      HTML("<b>Chart:</b> exposure across all mapped cities, with the selected",
+           "city's zones overlaid. Use <b>Group by</b>, above the chart, to",
+           "regroup the same zones by HOLC grade or by a demographic quintile",
+           "(income, %&nbsp;Hispanic, %&nbsp;Black): does the disparity follow",
+           "redlining, income, or present-day demographics?")
     ),
     helpText(HTML(paste(
-      "<small>All three transportation sectors are shown. Aviation is sparse",
-      "&mdash; about 66% of zones have no measurable aviation exposure, so read",
+      "<small>All three emission sources are shown. Aviation is sparse",
+      "&mdash; 54&ndash;78% of mapped zones have no measurable aviation",
+      "exposure, so read",
       "its &ldquo;% none&rdquo; row alongside its boxes. No combined index (CEI)",
       "is reported. Source: redenv (Weesner &amp; Lim, UA). NEMO emissions (EPA",
       "NEI 2017); BTS noise; HOLC via Mapping Inequality; ACS 2019. Work sample",
       "&mdash; descriptive, not a published or causal result.</small>")))
   ),
+  # compact the in-card "Group by" control: shiny's selectInput ships a
+  # form-group bottom margin and a full-size label, both of which inflate the
+  # card header out of proportion to the title beside it
+  tags$head(tags$style(HTML(
+    ".chart-ctl { width: 230px; flex: 0 0 auto; }
+     .chart-ctl .form-group, .chart-ctl .shiny-input-container { margin-bottom: 0; }
+     .chart-ctl label { margin-bottom: .1rem; font-size: .78rem;
+                        font-weight: 500; opacity: .75; }
+     .chart-ctl .form-select, .chart-ctl select { padding-top: .2rem;
+                        padding-bottom: .2rem; font-size: .85rem; }"))),
   layout_columns(
     fill = FALSE,
     value_box(title = "Grade D vs. A intensity (zones with exposure)",
@@ -197,8 +212,17 @@ ui <- page_sidebar(
     leafletOutput("map", height = 500)
   ),
   card(
-    height = 400,
-    card_header(textOutput("chart_title", inline = TRUE)),
+    height = 430,
+    # The grouping control lives in this card, not the sidebar: it acts on the
+    # chart alone, and next to the sidebar's city/sector/pollutant inputs (which
+    # all drive the map) it read as a fourth map control.
+    card_header(
+      div(class = "d-flex justify-content-between align-items-center gap-3",
+          textOutput("chart_title", inline = TRUE),
+          div(class = "chart-ctl",
+              selectInput("eby", "Group by", choices = equity_by,
+                          selected = "grade", width = "100%")))
+    ),
     plotOutput("equity", height = 340)
   )
 )
@@ -275,10 +299,12 @@ server <- function(input, output, session) {
             input$city, sector_label(), poll_label())
   })
   # An all-grey map is a correct answer, not a broken one, but it does not look
-  # like one. It stays common for aviation even after the thin-city filter: 33
-  # of the 155 cities have no zone with measurable aviation noise, and 9-10 have
-  # none for its air pollutants. Say so in the header rather than leaving the
-  # reader to guess. (Rail noise empties 3 cities; road never empties one.)
+  # like one. At min_zones = 100 no city in the bundle is all-grey for any
+  # sector x pollutant (it was 33 of 155 cities for aviation noise at a cutoff
+  # of 20), so this branch is currently unreachable -- keep it, because the
+  # cutoff is a display choice that may be lowered again, and individual zones
+  # still go grey constantly (54-78% of zones for aviation).
+  # Say so in the header rather than leaving the reader to guess.
   output$map_note <- renderUI({
     z <- city_zones()
     if (any(!is.na(z$xp) & z$xp > 0)) return(NULL)
@@ -293,7 +319,7 @@ server <- function(input, output, session) {
   output$chart_title <- renderText({
     grp <- if (input$eby == "grade") "HOLC grades"
            else sprintf("%s quintiles", eby_label())
-    sprintf("%s %s exposure across %s (national)",
+    sprintf("%s %s exposure across %s (pooled)",
             tools::toTitleCase(sector_label()), poll_label(), grp)
   })
 

@@ -9,8 +9,8 @@
 # xp_out.csv (see scripts/compile/clean.R), so the join is exact -- all 8,920
 # graded zones match. (Native holc_maps.gpkg polygons exist but key on a
 # different label field, so the crosswalk is the clean join.) The thin-city
-# filter below then takes those 8,920 zones / 221 cities down to the 8,289
-# zones / 155 cities that reach the app.
+# filter below then takes those 8,920 zones / 221 cities down to the 2,826
+# zones / 14 cities that reach the app.
 #
 # Bundle contents (list):
 #   zones  - one sf POLYGON row per HOLC zone: HOLCID, place, city, state,
@@ -47,7 +47,7 @@ d_out   <- "D:/research/redenv/data/output"
 
 keep_sectors    <- c("Rail", "Road", "Aviation")
 drop_pollutants <- c("CEI")
-min_zones       <- 20  # drop thin-coverage cities (< min_zones graded zones)
+min_zones       <- 100  # drop thin-coverage cities (< min_zones graded zones)
 
 # 1. exposure + demographics from xp_out.csv --------------------------------
 xp <- fread(file.path(d_out, "xp_out.csv"))
