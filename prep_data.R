@@ -19,7 +19,9 @@
 #            (Rail + Road + Aviation; NO CEI, NO Total -- CEI is structurally
 #            broken, Total is a sum of the three and carries no separate story)
 #   cities - searchable city selector table (place, city, state, n_zones)
-#   rank   - sector first-place ranking summary (the anchor finding)
+#   rank   - sector first-place ranking summary (the anchor finding), re-tallied
+#            with the CEI comparison dropped
+#   rank_cmp - how many pollutant x measure comparisons that tally covers
 #
 # Hard constraints baked in here (see interactive_display_plan_2026-07-14.md):
 #   * No CEI in any form (structurally broken combined index).
@@ -110,10 +112,32 @@ cat(sprintf("cities: %d  (zones/city: min %d, median %g, max %d)\n",
             max(cities$n_zones)))
 
 # 4. anchor finding: sector first-place ranking -----------------------------
-rank <- fread(file.path(d_out, "sector_strat/sector_rank_summary.csv"))
+# Re-tallied here from sector_rank_long.csv rather than read from the baked
+# sector_rank_summary.csv, because that summary includes the CEI comparison
+# (M1_holc_pct_sig for CEI is one of its 17 pollutant x measure cells) and the
+# app reports no CEI in any form. Dropping it leaves 16 comparisons: 4
+# pollutants (NO, NO2, PM25, Noise) x 4 measures (HOLC pct-significant, and the
+# |coef| on pct_blk / pct_hisp / ln_inc). Ranks are per comparison and already
+# computed upstream, so dropping a comparison never changes the surviving ones.
+# ties.method = "min" upstream means a tied comparison awards two first places,
+# so the finishes total can exceed the comparison count; n_cmp is carried into
+# the bundle so the app can state both without hardcoding either.
+rank_long <- read.csv(file.path(d_out, "sector_strat/sector_rank_long.csv"),
+                      stringsAsFactors = FALSE)
+rank_long <- rank_long[rank_long$pollutant != "CEI", ]
+n_cmp <- nrow(unique(rank_long[, c("pollutant", "measure")]))
+rank  <- rank_long |>
+  filter(rank == 1) |>
+  count(sector, name = "n_first_place") |>
+  mutate(pct_first = round(100 * n_first_place / sum(n_first_place), 1)) |>
+  arrange(desc(n_first_place))
+cat(sprintf("sector ranking: %d comparisons (CEI dropped), %d first places\n",
+            n_cmp, sum(rank$n_first_place)))
+print(as.data.frame(rank))
 
 # 5. save bundle ------------------------------------------------------------
-saveRDS(list(zones = zones, exp = exp, cities = cities, rank = rank),
+saveRDS(list(zones = zones, exp = exp, cities = cities, rank = rank,
+             rank_cmp = n_cmp),
         file.path(app_dir, "redenv_data.rds"))
 sz <- file.info(file.path(app_dir, "redenv_data.rds"))$size
 cat(sprintf("wrote redenv_data.rds (%.2f MB)\n", sz / 1024^2))

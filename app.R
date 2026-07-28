@@ -56,6 +56,7 @@ zones  <- d$zones
 exp    <- as.data.frame(d$exp)
 cities <- d$cities
 rank   <- d$rank
+rank_cmp <- d$rank_cmp   # pollutant x measure comparisons behind the tally
 
 # Estimated zone population. The pipeline's pop_total is an area-weighted MEAN
 # of the intersecting tracts' totals (comb.R multiplies every numeric column by
@@ -133,14 +134,15 @@ tiles_for <- function(map, which) {
 # always a single city; there is no all-cities view.
 city_choices <- setNames(cities$place, cities$place)
 
-# anchor finding from the ranking table: which sector takes first place most
-# often across the 18 sector x measure comparisons in sector_stratification.R.
-# Sorted here so the value box shows the leader and the full standing, not just
-# the winner -- the gap is the point (rail 61%, and aviation ahead of road).
-rank_tab  <- as.data.frame(rank)
-rank_tab  <- rank_tab[order(-rank_tab$pct_first), ]
-rank_n    <- sum(rank_tab$n_first_place)
-lead_sect <- rank_tab$sector[1]
+# Anchor finding: how often each sector ranks first for steepness of gradient,
+# across the pollutant x disparity-measure comparisons in
+# sector_stratification.R. Sorted here so the value box shows the full standing
+# rather than only the winner -- the gap is the point (rail well clear, and
+# aviation, not road, in second). rank_n exceeds rank_cmp because the upstream
+# rank() uses ties.method = "min", so a tied comparison awards two first places.
+rank_tab <- as.data.frame(rank)
+rank_tab <- rank_tab[order(-rank_tab$pct_first), ]
+rank_n   <- sum(rank_tab$n_first_place)
 
 # ---- UI ---------------------------------------------------------------------
 ui <- page_sidebar(
@@ -252,21 +254,25 @@ ui <- page_sidebar(
                         font-weight: 500; opacity: .75; }
      .chart-ctl .form-select, .chart-ctl select { padding-top: .2rem;
                         padding-bottom: .2rem; font-size: .85rem; }
-     .vb-detail { margin-top: .45rem; display: flex; flex-wrap: wrap;
-                  gap: .25rem; }
-     .vb-chip { font-size: .72rem; font-weight: 600; line-height: 1;
-                padding: .22rem .4rem; border-radius: .2rem; color: #1a1a1a;
-                font-variant-numeric: tabular-nums; }
-     .vb-bars { margin-top: .45rem; font-size: .72rem; }
-     .vb-bar-note { opacity: .6; margin-bottom: .2rem; }
-     .vb-bar-row { display: flex; align-items: center; gap: .35rem;
-                   margin-bottom: .18rem; }
-     .vb-bar-lab { width: 3.9rem; flex: 0 0 auto; }
-     .vb-bar-track { flex: 1 1 auto; height: .42rem; border-radius: .21rem;
+     .vb-grades { margin-top: .4rem; display: grid; gap: .22rem;
+                  grid-template-columns: repeat(4, 1fr); }
+     .vb-grade { border-radius: .25rem; padding: .28rem .1rem .22rem;
+                 text-align: center; color: #1a1a1a; line-height: 1.05; }
+     .vb-grade-g { font-size: .68rem; font-weight: 600; opacity: .7;
+                   letter-spacing: .04em; }
+     .vb-grade-n { font-size: 1.05rem; font-weight: 700;
+                   font-variant-numeric: tabular-nums; }
+     .vb-bars { font-size: .78rem; }
+     .vb-bar-row { display: flex; align-items: center; gap: .4rem;
+                   margin-bottom: .22rem; }
+     .vb-bar-lab { width: 4.2rem; flex: 0 0 auto; }
+     .vb-bar-track { flex: 1 1 auto; height: .45rem; border-radius: .225rem;
                      background: rgba(0,0,0,.12); }
-     .vb-bar-fill { height: 100%; border-radius: .21rem; }
-     .vb-bar-val { width: 2.2rem; flex: 0 0 auto; text-align: right;
-                   font-variant-numeric: tabular-nums; }"))),
+     .vb-bar-fill { height: 100%; border-radius: .225rem; }
+     .vb-bar-val { width: 2.4rem; flex: 0 0 auto; text-align: right;
+                   font-weight: 600; font-variant-numeric: tabular-nums; }
+     .vb-note { margin-top: .45rem; font-size: .7rem; line-height: 1.35;
+                opacity: .65; }"))),
   card(
     full_screen = TRUE, height = 540,
     card_header(textOutput("map_title", inline = TRUE),
@@ -288,11 +294,14 @@ ui <- page_sidebar(
               value = textOutput("vb_n"),
               uiOutput("vb_n_grades"),
               theme = "secondary"),
-    # Naming only the winner hides how far ahead it is and buries that aviation
-    # out-ranks road, so all three sectors' shares are shown.
-    value_box(title = "Most stratified sector",
-              value = textOutput("vb_rail"),
-              uiOutput("vb_rank_bars"),
+    # No headline sector. Naming a winner in the value slot restates the top bar
+    # and makes the box read as a verdict; the three shares ARE the finding, and
+    # the reader should see rail's lead and aviation's edge over road as one
+    # picture. The percentage needs a gloss to mean anything, so it gets one
+    # underneath rather than a cryptic label above the bars.
+    value_box(title = "Sector stratification",
+              value = uiOutput("vb_rank_bars"),
+              uiOutput("vb_rank_note"),
               theme = "light")
   ),
   card(
@@ -428,28 +437,28 @@ server <- function(input, output, session) {
   # the same grade palette as the map legend and the chart. factor() over the
   # full level set keeps a grade with zero zones visible as "0" rather than
   # silently dropping out of the row.
+  # A four-up grid, not a chip row: the counts are the content here, so each
+  # grade gets equal width and its number is set large, with the letter as the
+  # small caption above it. A flowing row of same-size chips buried the numbers
+  # in their own labels.
   output$vb_n_grades <- renderUI({
     z <- st_drop_geometry(city_zones())
     n <- table(factor(z$grade, levels = grade_levels))
-    div(class = "vb-detail",
+    div(class = "vb-grades",
         lapply(grade_levels, function(g)
-          span(class = "vb-chip",
-               style = sprintf("background:%s;", grade_cols[[g]]),
-               sprintf("%s %s", g, format(as.integer(n[[g]]), big.mark = ",")))))
+          div(class = "vb-grade",
+              style = sprintf("background:%s;", grade_cols[[g]]),
+              div(class = "vb-grade-g", g),
+              div(class = "vb-grade-n",
+                  format(as.integer(n[[g]]), big.mark = ",")))))
   })
 
-  output$vb_rail <- renderText(sprintf("%s (%.0f%%)", lead_sect,
-                                       rank_tab$pct_first[1]))
-
-  # The full standing behind that headline. Bar widths are the share itself
-  # (the three sum to 100%), not scaled to the leader, so the bars read as the
-  # split of first-place finishes rather than as a ranking. The leader is
-  # darker; the point of showing the other two is that road, the sector a
-  # reader would expect to dominate, comes last.
+  # Bar widths are the share itself (the three sum to 100%), not scaled to the
+  # leader, so the row reads as the split of first-place finishes rather than as
+  # a ranking. The leader is darker; the point of showing all three is that
+  # road, the sector a reader would expect to dominate, comes last.
   output$vb_rank_bars <- renderUI({
     div(class = "vb-bars",
-        div(class = "vb-bar-note",
-            sprintf("share of %d first-place finishes", rank_n)),
         lapply(seq_len(nrow(rank_tab)), function(i) {
           div(class = "vb-bar-row",
               title = sprintf("%s: %d of %d", rank_tab$sector[i],
@@ -463,6 +472,21 @@ server <- function(input, output, session) {
               span(class = "vb-bar-val",
                    sprintf("%.0f%%", rank_tab$pct_first[i])))
         }))
+  })
+
+  # What the percentage counts. "Steepest of the three" is the honest reading of
+  # a first-place finish: each comparison ranks the sectors against each other,
+  # it does not measure any one sector's disparity in absolute terms. Both
+  # counts are stated because they differ -- a tied comparison awards two first
+  # places, so 16 comparisons hand out 17 of them, and a reader checking the
+  # hover counts against the comparison total would otherwise find them short.
+  output$vb_rank_note <- renderUI({
+    div(class = "vb-note",
+        HTML(sprintf(paste(
+          "Share of %d first-place finishes across %d comparisons:",
+          "4 pollutants &times; 4 disparity measures (HOLC grade, income,",
+          "%% Hispanic, %% Black). First place = steepest gradient of the",
+          "three sectors; ties share the place."), rank_n, rank_cmp)))
   })
 
   # ---- choropleth ----
