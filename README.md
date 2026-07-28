@@ -45,11 +45,15 @@ aviation), and an **emission type** (noise, NO, NO₂, PM2.5):
   none**. Both track HOLC grade: for rail noise, 34% of grade-A zones have no
   measurable exposure against 12% of grade-D zones, and among zones that do
   have it, grade D carries **2.0×** the exposure of grade A.
-- **Value boxes** — the **Grade D-vs-A intensity ratio** across the mapped
-  cities for the current source × type (computed over zones with exposure, so
-  it matches the chart), **zones mapped**, and the anchor finding: **rail is
-  the most stratified emission source** (ranks #1 in 61% of sector × measure
-  comparisons, computed on the full 8,920-zone study frame).
+- **Value boxes**, between the map and the chart — the **Grade D-vs-A intensity
+  ratio** across the mapped cities for the current source × type (computed over
+  zones with exposure, so it matches the chart); **zones mapped in the selected
+  city**, broken out per HOLC grade; and **sector stratification**, the share of
+  first-place finishes each source takes across 16 pollutant × disparity-measure
+  comparisons on the full 8,920-zone study frame — rail 59%, aviation 24%, road
+  18%. First place means the steepest gradient of the three sources, so the
+  measure ranks the sources against each other rather than sizing any one
+  source's disparity. CEI is excluded from that tally as it is everywhere else.
 
 ## Scope (deliberately hedged)
 This is a descriptive work sample, not a published or causal result, and it
