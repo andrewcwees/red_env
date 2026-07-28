@@ -135,7 +135,36 @@ rail_pct <- rank$pct_first[rank$sector == "Rail"]
 
 # ---- UI ---------------------------------------------------------------------
 ui <- page_sidebar(
-  title = "Redlining & Transportation Exposure",
+  # A bare string title renders as one unframed line that says nothing about
+  # what is on screen. This is a full banner instead: what the project asks,
+  # then how to read the map. bslib drops the title tag straight into the
+  # navbar's container-fluid (there is no .navbar-brand wrapper when the title
+  # is a tag), so the banner is styled through .app-brand below. The city count
+  # reads from the bundle so the min_zones filter can move without stranding a
+  # hardcoded number.
+  title = div(
+    class = "app-brand",
+    div(class = "app-brand-title", "Redlining & Transportation Exposure"),
+    div(class = "app-brand-sub",
+        sprintf(paste("Rail, road, and aviation exposure across 1930s",
+                      "HOLC-graded neighborhoods in %d cities"),
+                nrow(cities))),
+    p(class = "app-brand-lede",
+      "In the 1930s the Home Owners' Loan Corporation graded American",
+      "neighborhoods A through D for mortgage risk, a ranking that tracked",
+      "race and shaped where investment went for decades afterward. This map",
+      "asks how present-day transportation emissions exposure sits on top of",
+      "those grades."),
+    p(class = "app-brand-lede",
+      "Each polygon is one graded neighborhood, shaded by modeled rail, road,",
+      "or aviation exposure on a log scale, darker meaning higher. The scale",
+      "is fitted to the selected city, so it reads the spread within that city",
+      "and colors are not comparable between cities. Zones with no measurable",
+      "exposure get their own shade, because an absence is not a low value.",
+      "The chart below the map pools every mapped city and regroups the same",
+      "zones by HOLC grade or by present-day demographics. Descriptive, not",
+      "causal.")
+  ),
   theme = bs_theme(version = 5, bootswatch = "cosmo"),
   fillable = FALSE,
   sidebar = sidebar(
@@ -159,11 +188,9 @@ ui <- page_sidebar(
     sliderInput("fillop", "Fill opacity", min = 0.2, max = 1, value = 0.8,
                 step = 0.05, ticks = FALSE),
     hr(),
+    # What the map shows now lives in the banner; what is left here is tied to
+    # the controls beside it.
     helpText(
-      "Each polygon is a 1930s HOLC-graded neighborhood. Color shows present-day",
-      "transportation-sector environmental exposure on a log scale (darker =",
-      "higher). The scale is fitted to the selected city, so it reads the",
-      "spread within that city and colors are not comparable between cities.",
       "Hover a zone for its grade, exposure, and demographics.",
       "Use the layer control (top-right of the map) to switch between the",
       "exposure and HOLC-grade fill views.",
@@ -186,11 +213,31 @@ ui <- page_sidebar(
       "NEI 2017); BTS noise; HOLC via Mapping Inequality; ACS 2019. Work sample",
       "&mdash; descriptive, not a published or causal result.</small>")))
   ),
-  # compact the in-card "Group by" control: shiny's selectInput ships a
-  # form-group bottom margin and a full-size label, both of which inflate the
-  # card header out of proportion to the title beside it
+  # Banner: the navbar and its container are flex rows by default, which would
+  # hold the banner's blocks on one line, so both go to block flow. The bottom
+  # rule runs the four HOLC grade colors, tying the banner to the legend.
+  # Below that, compact the in-card "Group by" control: shiny's selectInput
+  # ships a form-group bottom margin and a full-size label, both of which
+  # inflate the card header out of proportion to the title beside it.
   tags$head(tags$style(HTML(
-    ".chart-ctl { width: 230px; flex: 0 0 auto; }
+    ".navbar, .navbar > .container-fluid { display: block; }
+     .navbar { padding: 1.6rem 0 1.3rem; background-color: #f6f6f4;
+               border-bottom: 3px solid transparent;
+               border-image: linear-gradient(to right, #76a865, #7cb5bd,
+                             #ffff00, #d9838d) 1; }
+     .app-brand-title { font-size: 2.05rem; font-weight: 700;
+                        line-height: 1.1; letter-spacing: -.02em;
+                        margin-bottom: .2rem; }
+     .app-brand-sub { font-size: .95rem; font-weight: 400; opacity: .7;
+                      line-height: 1.3; margin-bottom: .85rem; }
+     .app-brand-lede { font-size: .9rem; line-height: 1.5; opacity: .85;
+                       max-width: 95ch; margin-bottom: .4rem; }
+     .app-brand-lede:last-child { margin-bottom: 0; }
+     @media (max-width: 700px) {
+       .app-brand-title { font-size: 1.5rem; }
+       .navbar { padding: 1.1rem 0 .9rem; }
+     }
+     .chart-ctl { width: 230px; flex: 0 0 auto; }
      .chart-ctl .form-group, .chart-ctl .shiny-input-container { margin-bottom: 0; }
      .chart-ctl label { margin-bottom: .1rem; font-size: .78rem;
                         font-weight: 500; opacity: .75; }
