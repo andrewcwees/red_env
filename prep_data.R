@@ -8,7 +8,9 @@
 # HOLCID = label_state_city_grade, is built identically to the zone ID in
 # xp_out.csv (see scripts/compile/clean.R), so the join is exact -- all 8,920
 # graded zones match. (Native holc_maps.gpkg polygons exist but key on a
-# different label field, so the crosswalk is the clean join.)
+# different label field, so the crosswalk is the clean join.) The thin-city
+# filter below then takes those 8,920 zones / 221 cities down to the 8,289
+# zones / 155 cities that reach the app.
 #
 # Bundle contents (list):
 #   zones  - one sf POLYGON row per HOLC zone: HOLCID, place, city, state,
@@ -22,7 +24,7 @@
 # Hard constraints baked in here (see interactive_display_plan_2026-07-14.md):
 #   * No CEI in any form (structurally broken combined index).
 #   * logxp is the coloring scale for every pollutant (tail concentration).
-#   * Aviation is INCLUDED. It is zero-inflated (63-69% of zones have none, vs
+#   * Aviation is INCLUDED. It is zero-inflated (63-70% of zones have none, vs
 #     8-22% for rail and 0% for road), which is why it was held back, but the
 #     app now reports presence and intensity separately, so the zeros are shown
 #     as an absence rather than folded into the ramp. Dropping a sector because
@@ -45,7 +47,7 @@ d_out   <- "D:/research/redenv/data/output"
 
 keep_sectors    <- c("Rail", "Road", "Aviation")
 drop_pollutants <- c("CEI")
-min_zones       <- 5  # drop thin-coverage cities (< min_zones graded zones)
+min_zones       <- 20  # drop thin-coverage cities (< min_zones graded zones)
 
 # 1. exposure + demographics from xp_out.csv --------------------------------
 xp <- fread(file.path(d_out, "xp_out.csv"))
