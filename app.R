@@ -7,7 +7,9 @@
 # the 1930s HOLC ("redlining") maps, and shows how exposure tracks HOLC grade.
 #
 #   * Map        -> HOLC zones filled by exposure (log scale) or by HOLC grade,
-#                   for a chosen transportation sector x pollutant. Zones with
+#                   for a chosen transportation sector x pollutant. The ramp is
+#                   fitted to the selected city, so it reads the within-city
+#                   spread and colors do not compare across cities. Zones with
 #                   no measurable exposure get their own color, not the bottom
 #                   of the ramp.
 #   * Equity     -> national distribution across HOLC grades A-D (or a
@@ -24,7 +26,7 @@
 # Rail + Road + Aviation, no combined index (CEI), descriptive framing only --
 # no causal claims. This is a work sample, not a published result.
 #
-# Aviation is included even though it is heavily zero-inflated (~65% of zones
+# Aviation is included even though it is heavily zero-inflated (~66% of zones
 # have no measurable aviation exposure, against 8-22% for rail and 0% for road).
 # The presence/intensity split above is what makes that reportable: the zeros
 # read as an absence, not as a low value. Its gradients also disagree with the
@@ -51,6 +53,17 @@ zones  <- d$zones
 exp    <- as.data.frame(d$exp)
 cities <- d$cities
 rank   <- d$rank
+
+# Estimated zone population. The pipeline's pop_total is an area-weighted MEAN
+# of the intersecting tracts' totals (comb.R multiplies every numeric column by
+# a weight that sums to 1 within a zone), so it is not a headcount and is not
+# carried into the app bundle. pdens is people per km2 per tract (clean.R), an
+# intensive quantity that the same weighting averages correctly, so density x
+# zone area recovers a population estimate. It inherits the uniform-density-
+# within-tract assumption that the whole crosswalk rests on.
+zones$area_km2 <- as.numeric(st_area(st_transform(zones, 5070))) / 1e6
+zones$pop_est  <- zones$pdens * zones$area_km2
+
 zattr  <- st_drop_geometry(zones)   # zone grade + demographics, no geometry
 
 # ---- lookups ----------------------------------------------------------------
@@ -66,7 +79,7 @@ grade_levels <- c("A", "B", "C", "D")
 grade_cols <- c(A = "#76a865", B = "#7cb5bd", C = "#ffff00", D = "#d9838d")
 
 # A zero is "no measurable exposure", not "low exposure", and it is common:
-# 63-69% of zones for aviation, 22% for rail noise, 8-10% for rail
+# 63-70% of zones for aviation, 22% for rail noise, 8-10% for rail
 # NO/NO2/PM2.5. Since logxp is log1p(xp), a zero maps to logxp = 0 and would sit
 # at the bottom of a continuous ramp -- visually identical to a genuinely low
 # nonzero value. So zeros get their own color and the ramp is fitted to nonzero
@@ -83,9 +96,34 @@ equity_by <- c("HOLC grade"     = "grade",
 # demographic quintile ramp (low -> high value, yellow -> dark red)
 q_ramp <- colorRampPalette(c("#ffffcc", "#800026"))
 
-# city selector choices: "Birmingham, AL" -> "Birmingham, AL"; plus a
-# national view that fills every city's zones at once
-NATIONAL <- "National (all cities)"
+# Basemap. Positron stays the default: a near-white background is what lets a
+# choropleth carry the message, and it is the right base for reading exposure.
+# Satellite is offered for orientation -- it answers "what is actually there?"
+# (the rail yard, the interchange, the airport) in a way an abstract base
+# cannot, which matters for a map whose subject is proximity to infrastructure.
+#
+# Esri.WorldImagery is used because it needs no API key and no account. OSM
+# itself has no satellite tiles -- OSM is vector street data, and every raster
+# "OSM satellite" is a third-party imagery layer, so the choice is really which
+# imagery host to point at. USGS.USImagery (public domain, NAIP) is the other
+# keyless option and is US-only, which would suffice here; Esri's is sharper at
+# city zoom and is the more conventional pick.
+#
+# Imagery carries no place names, so satellite pairs it with a labels-only
+# overlay. Both are tile layers, so the labels sit above the imagery and below
+# the polygons without any pane juggling.
+basemaps <- c("Light" = "light", "Satellite" = "sat")
+tiles_for <- function(map, which) {
+  if (identical(which, "sat"))
+    map |>
+      addProviderTiles(providers$Esri.WorldImagery, group = "basemap") |>
+      addProviderTiles(providers$CartoDB.PositronOnlyLabels, group = "basemap")
+  else
+    map |> addProviderTiles(providers$CartoDB.Positron, group = "basemap")
+}
+
+# city selector choices: "Birmingham, AL" -> "Birmingham, AL". The map is
+# always a single city; there is no all-cities view.
 city_choices <- setNames(cities$place, cities$place)
 
 # anchor finding text from the ranking table
@@ -100,7 +138,10 @@ ui <- page_sidebar(
     width = 330,
     selectizeInput(
       "city", "City", choices = NULL,  # populated server-side (searchable)
-      options = list(placeholder = "Type to search 200 cities...",
+      # count comes from the bundle so the filter in prep_data.R can change
+      # without stranding a hardcoded number here
+      options = list(placeholder = sprintf("Type to search %d cities...",
+                                           nrow(cities)),
                      maxOptions = 300)
     ),
     radioButtons("sector", "Transportation sector", choices = sectors,
@@ -109,13 +150,23 @@ ui <- page_sidebar(
                 selected = "Noise"),
     selectInput("eby", "Equity chart: group exposure by", choices = equity_by,
                 selected = "grade"),
+    radioButtons("basemap", "Basemap", choices = basemaps,
+                 selected = "light", inline = TRUE),
+    # Satellite is unreadable under an opaque choropleth, so the fill has to be
+    # dimmable for the imagery to be worth switching to at all.
+    sliderInput("fillop", "Fill opacity", min = 0.2, max = 1, value = 0.8,
+                step = 0.05, ticks = FALSE),
     hr(),
     helpText(
       "Each polygon is a 1930s HOLC-graded neighborhood. Color shows present-day",
       "transportation-sector environmental exposure on a log scale (darker =",
-      "higher). Hover a zone for its grade, exposure, and demographics.",
+      "higher). The scale is fitted to the selected city, so it reads the",
+      "spread within that city and colors are not comparable between cities.",
+      "Hover a zone for its grade, exposure, and demographics.",
       "Use the layer control (top-right of the map) to switch between the",
-      "exposure and HOLC-grade fill views."
+      "exposure and HOLC-grade fill views.",
+      "Switch the basemap to Satellite and turn the fill opacity down to see",
+      "what the infrastructure driving the exposure actually is."
     ),
     helpText(
       HTML("<b>Chart:</b> exposure nationally, grouped by HOLC grade or by a",
@@ -124,7 +175,7 @@ ui <- page_sidebar(
     ),
     helpText(HTML(paste(
       "<small>All three transportation sectors are shown. Aviation is sparse",
-      "&mdash; about 65% of zones have no measurable aviation exposure, so read",
+      "&mdash; about 66% of zones have no measurable aviation exposure, so read",
       "its &ldquo;% none&rdquo; row alongside its boxes. No combined index (CEI)",
       "is reported. Source: redenv (Weesner &amp; Lim, UA). NEMO emissions (EPA",
       "NEI 2017); BTS noise; HOLC via Mapping Inequality; ACS 2019. Work sample",
@@ -134,7 +185,7 @@ ui <- page_sidebar(
     fill = FALSE,
     value_box(title = "Grade D vs. A intensity (zones with exposure)",
               value = textOutput("vb_ratio"), theme = "primary"),
-    value_box(title = textOutput("vb_n_title", inline = TRUE),
+    value_box(title = "Zones mapped in city",
               value = textOutput("vb_n"), theme = "secondary"),
     value_box(title = "Most stratified sector",
               value = textOutput("vb_rail"), theme = "light")
@@ -155,10 +206,10 @@ ui <- page_sidebar(
 # ---- server -----------------------------------------------------------------
 server <- function(input, output, session) {
 
-  # searchable city selector, defaulting to the national (all cities) view
+  # searchable city selector, defaulting to Chicago
   updateSelectizeInput(session, "city",
-                       choices = c(setNames(NATIONAL, NATIONAL), city_choices),
-                       selected = NATIONAL, server = TRUE)
+                       choices = city_choices,
+                       selected = "Chicago, IL", server = TRUE)
 
   poll_label   <- reactive(poll_lab[[input$poll]])
   sector_label <- reactive(tolower(input$sector))
@@ -169,18 +220,29 @@ server <- function(input, output, session) {
         c("HOLCID", "xp", "logxp")]
   })
 
-  # national NONZERO logxp values -- the ramp domain and the legend range. Using
-  # the national (not per-city) spread keeps colors comparable across cities;
-  # dropping zeros keeps the mass of no-exposure zones from compressing the ramp.
+  # NONZERO logxp values for the SELECTED CITY -- the ramp domain and the legend
+  # range. The ramp is fitted per city, not nationally: the map shows one city at
+  # a time, and any single city occupies a narrow slice of the national spread,
+  # so a national domain rendered most sector x pollutant views near-uniform
+  # (road NO2 was close to a single color everywhere). The tradeoff is that
+  # colors are NOT comparable between cities -- the legend and the sidebar say
+  # so, and the equity chart below is where cross-city context lives. Dropping
+  # zeros keeps the mass of no-exposure zones from compressing the ramp.
   nz_vals <- reactive({
-    v <- exp_sel()$logxp
+    v <- city_zones()$logxp
     v[!is.na(v) & v > 0]
   })
 
   pal <- reactive({
     v <- nz_vals()
-    if (!length(v) || min(v) == max(v)) return(NULL)   # no ramp to draw
-    colorNumeric("YlOrRd", domain = v, na.color = na_col)
+    if (!length(v)) return(NULL)   # no ramp to draw
+    # A per-city domain can collapse to a single distinct value (one zone with
+    # exposure, or several with identical values), which colorNumeric rejects.
+    # Pad it so those zones still get a ramp color instead of falling through to
+    # the near-white "no data" fill.
+    rng <- range(v)
+    if (rng[1] == rng[2]) rng <- rng + c(-1, 1) * max(abs(rng[1]) * 0.01, 1e-6)
+    colorNumeric("YlOrRd", domain = rng, na.color = na_col)
   })
 
   # per-zone fill: zero -> grey, unmatched -> near-white, else the ramp. Returns
@@ -198,7 +260,7 @@ server <- function(input, output, session) {
   # selected city's zones joined to exposure
   city_zones <- reactive({
     req(input$city)
-    z <- if (input$city == NATIONAL) zones else zones[zones$place == input$city, ]
+    z <- zones[zones$place == input$city, ]
     # a few HOLC zones are GEOMETRYCOLLECTIONs, which leaflet::addPolygons
     # can't render; keep only their polygonal parts (no-op for POLYGON /
     # MULTIPOLYGON zones, so per-city views are unaffected)
@@ -209,13 +271,14 @@ server <- function(input, output, session) {
 
   output$map_title <- renderText({
     req(input$city)
-    where <- if (input$city == NATIONAL) "All U.S. cities" else input$city
     sprintf("%s: %s %s exposure by HOLC zone",
-            where, sector_label(), poll_label())
+            input$city, sector_label(), poll_label())
   })
   # An all-grey map is a correct answer, not a broken one, but it does not look
-  # like one. 54 of the 200 cities have no zone with any measurable aviation
-  # exposure, so say so in the header rather than leaving the reader to guess.
+  # like one. It stays common for aviation even after the thin-city filter: 33
+  # of the 155 cities have no zone with measurable aviation noise, and 9-10 have
+  # none for its air pollutants. Say so in the header rather than leaving the
+  # reader to guess. (Rail noise empties 3 cities; road never empties one.)
   output$map_note <- renderUI({
     z <- city_zones()
     if (any(!is.na(z$xp) & z$xp > 0)) return(NULL)
@@ -237,7 +300,7 @@ server <- function(input, output, session) {
   # ---- value boxes ----
   # Intensity ratio only -- medians over zones that HAVE exposure, matching the
   # equity chart's boxes. Pooling in the zeros would report presence x intensity
-  # as though it were intensity alone (rail noise: 19.1x pooled vs 3.0x here).
+  # as though it were intensity alone (rail noise: 19.3x pooled vs 3.1x here).
   output$vb_ratio <- renderText({
     e <- merge(exp_sel(),
                as.data.frame(zones)[, c("HOLCID", "grade")], by = "HOLCID")
@@ -247,16 +310,12 @@ server <- function(input, output, session) {
     if (is.na(mA) || is.na(mD) || mA == 0) "n/a" else sprintf("%.2fx", mD / mA)
   })
   output$vb_n   <- renderText(format(nrow(city_zones()), big.mark = ","))
-  output$vb_n_title <- renderText({
-    req(input$city)
-    if (input$city == NATIONAL) "Zones mapped (national)" else "Zones mapped in city"
-  })
   output$vb_rail <- renderText(sprintf("Rail (%.0f%%)", rail_pct))
 
   # ---- choropleth ----
   output$map <- renderLeaflet({
     leaflet(options = leafletOptions(minZoom = 3, preferCanvas = TRUE)) |>
-      addProviderTiles(providers$CartoDB.Positron) |>
+      tiles_for("light") |>
       setView(lng = -96, lat = 38, zoom = 4) |>
       # base-layer switches fire 'baselayerchange' (not the overlay events that
       # drive leaflet's group-linked legends), so show only the active layer's
@@ -279,6 +338,23 @@ server <- function(input, output, session) {
       ")
   })
 
+  # Basemap swap lives in its own observer so tile handling stays separable from
+  # shape drawing. The draw observer below still reads input$basemap, because
+  # the border colors change with the base, so a basemap switch does redraw the
+  # polygons -- it just no longer refits the view (see last_city). clearTiles
+  # drops whatever is there, one layer for light and two for satellite, so the
+  # two cases need no separate unwinding. ignoreInit because renderLeaflet has
+  # already drawn the light base.
+  observeEvent(input$basemap, {
+    leafletProxy("map") |> clearTiles() |> tiles_for(input$basemap)
+  }, ignoreInit = TRUE)
+
+  # Refit only when the CITY changes. Sector, pollutant, and the two display
+  # controls leave the geometry alone, so refitting on those threw away the
+  # reader's zoom for no reason -- and with a basemap worth zooming into, that
+  # matters more than it did.
+  last_city <- reactiveVal(NULL)
+
   observe({
     z  <- city_zones()
     p  <- pal()
@@ -291,13 +367,22 @@ server <- function(input, output, session) {
     xp_txt <- ifelse(is.na(z$xp), "n/a",
                      ifelse(z$xp == 0, "none measured", sprintf("%.3f", z$xp)))
     labs <- sprintf(
-      paste0("<b>HOLC grade %s</b><br/>%s %s exposure: <b>%s</b><br/>",
-             "Median income: <b>%s</b><br/>%% Hispanic: <b>%s</b> &middot; ",
-             "%% Black: <b>%s</b>"),
-      z$grade, sector_label(), poll_label(), xp_txt,
+      paste0("<b>HOLC grade %s</b><br/>Estimated exposure: <b>%s</b><br/>",
+             "Median income: <b>%s</b> &middot; Est. population: <b>%s</b>"),
+      z$grade, xp_txt,
       dollar(z$inc, accuracy = 1),
-      percent(z$pct_hisp, accuracy = 1), percent(z$pct_blk, accuracy = 1)
+      comma(z$pop_est, accuracy = 100)
     ) |> lapply(htmltools::HTML)
+
+    # Borders do the work of separating adjacent zones, so they have to survive
+    # both a dimmed fill and a dark base. Grey hairlines disappear on imagery;
+    # white ones read against it, and a touch more weight holds the outline when
+    # the fill is turned down.
+    sat  <- identical(input$basemap, "sat")
+    bcol <- if (sat) "#ffffff" else "#888888"
+    bcol2 <- if (sat) "#ffffff" else "#666666"
+    bw   <- if (sat) 0.8 else 0.4
+    hcol <- if (sat) "#ffff00" else "#333333"
 
     bb <- as.numeric(st_bbox(z))
     prox <- leafletProxy("map", data = z) |>
@@ -305,9 +390,9 @@ server <- function(input, output, session) {
       # Exposure layer -- fill choropleth (thin neutral border)
       addPolygons(
         group = "Exposure",
-        fillColor = ~exp_col, fillOpacity = 0.8,
-        color = "#888888", weight = 0.4, opacity = 0.8,
-        highlightOptions = highlightOptions(weight = 3, color = "#333",
+        fillColor = ~exp_col, fillOpacity = input$fillop,
+        color = bcol, weight = bw, opacity = 0.8,
+        highlightOptions = highlightOptions(weight = 3, color = hcol,
                                             bringToFront = TRUE),
         label = labs
       ) |>
@@ -315,9 +400,9 @@ server <- function(input, output, session) {
       # so adjacent same-grade zones stay separable)
       addPolygons(
         group = "HOLC grade",
-        fillColor = ~grade_col, fillOpacity = 0.8,
-        color = "#666666", weight = 0.4, opacity = 0.8,
-        highlightOptions = highlightOptions(weight = 3, color = "#333",
+        fillColor = ~grade_col, fillOpacity = input$fillop,
+        color = bcol2, weight = bw, opacity = 0.8,
+        highlightOptions = highlightOptions(weight = 3, color = hcol,
                                             bringToFront = TRUE),
         label = labs
       ) |>
@@ -334,7 +419,8 @@ server <- function(input, output, session) {
     if (!is.null(p))
       prox <- prox |>
         addLegend("bottomright", pal = p, values = nz_vals(),
-                  title = "Exposure<br/><small>log(xp+1)</small>", opacity = 0.9,
+                  title = paste0("Exposure<br/><small>log(xp+1), scaled ",
+                                 "within city</small>"), opacity = 0.9,
                   className = "info legend legend-exposure")
     if (any(!is.na(z$xp) & z$xp == 0))
       prox <- prox |>
@@ -342,12 +428,18 @@ server <- function(input, output, session) {
                   labels = "No measurable exposure", opacity = 0.9,
                   className = "info legend legend-exposure")
 
-    prox |>
+    prox <- prox |>
       addLegend("bottomright", colors = unname(grade_cols),
                 labels = c("A", "B", "C", "D"),
                 title = "HOLC grade", opacity = 1,
-                className = "info legend legend-grade") |>
-      fitBounds(bb[1], bb[2], bb[3], bb[4])
+                className = "info legend legend-grade")
+
+    # isolate the read: this observer writes last_city too, and a plain read
+    # would make it depend on its own write and re-run forever
+    if (!identical(isolate(last_city()), input$city)) {
+      last_city(input$city)
+      prox |> fitBounds(bb[1], bb[2], bb[3], bb[4])
+    }
   })
 
   # ---- equity chart: national distribution by grade or demographic quintile,
@@ -355,15 +447,12 @@ server <- function(input, output, session) {
   output$equity <- renderPlot({
     req(input$city)
     eb  <- input$eby
-    national_view <- input$city == NATIONAL
     nat <- merge(exp_sel(), zattr, by = "HOLCID")
     # guard before the quantile binning below, which fails obscurely ("invalid
     # number of intervals") rather than usefully on an empty slice
     validate(need(nrow(nat) > 0,
                   "No exposure data for this sector and pollutant."))
-    # national view: boxes already ARE every zone, so skip the city overlay
-    city <- if (national_view) nat[0, ]
-            else merge(st_drop_geometry(city_zones())["HOLCID"], nat, by = "HOLCID")
+    city <- merge(st_drop_geometry(city_zones())["HOLCID"], nat, by = "HOLCID")
 
     if (eb == "grade") {
       nat$bin  <- factor(nat$grade, levels = grade_levels)
@@ -385,7 +474,7 @@ server <- function(input, output, session) {
     # both. A zone with no measurable exposure is not a low-exposure zone, and
     # the zero share is itself steeply graded (rail noise: 36.5% of grade-A
     # zones vs 13.8% of grade-D). Pooling drags grade A toward the floor and
-    # inflates the rail-noise D:A ratio from 3.0x to 19.1x. So: boxes show
+    # inflates the rail-noise D:A ratio from 3.1x to 19.3x. So: boxes show
     # intensity among zones that have exposure, labels show the share with none.
     zero_tab <- aggregate(list(pct_zero = nat$xp == 0), list(bin = nat$bin), mean)
     nat  <- nat[!is.na(nat$xp) & nat$xp > 0, ]
@@ -414,7 +503,7 @@ server <- function(input, output, session) {
            subtitle = paste0(
              "Boxes: intensity among zones with measurable exposure. ",
              "Labels: share with none.",
-             if (national_view) "" else sprintf("\nPoints: %s.", input$city))) +
+             sprintf("\nPoints: %s.", input$city))) +
       theme_minimal(base_size = 13) +
       theme(panel.grid.major.x = element_blank())
   })
