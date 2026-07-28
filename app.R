@@ -18,9 +18,12 @@
 #                   separately: boxes cover zones that HAVE exposure, labels
 #                   give each group's share with none. Both track grade, and
 #                   pooling them overstates the intensity gradient.
-#   * Value boxes-> Grade D-vs-A intensity ratio (same basis as the chart),
-#                   zones mapped, and the anchor finding (rail is the most
-#                   stratified sector).
+#   * Value boxes-> between the map and the chart, because two of the three read
+#                   off the map above them: Grade D-vs-A intensity ratio (same
+#                   basis as the chart), the selected city's zone count broken
+#                   out by HOLC grade, and the anchor finding (rail is the most
+#                   stratified sector) with the other two sectors' shares beside
+#                   it rather than only the winner.
 #
 # Scope is deliberately hedged (see interactive_display_plan_2026-07-14.md):
 # Rail + Road + Aviation, no combined index (CEI), descriptive framing only --
@@ -130,8 +133,14 @@ tiles_for <- function(map, which) {
 # always a single city; there is no all-cities view.
 city_choices <- setNames(cities$place, cities$place)
 
-# anchor finding text from the ranking table
-rail_pct <- rank$pct_first[rank$sector == "Rail"]
+# anchor finding from the ranking table: which sector takes first place most
+# often across the 18 sector x measure comparisons in sector_stratification.R.
+# Sorted here so the value box shows the leader and the full standing, not just
+# the winner -- the gap is the point (rail 61%, and aviation ahead of road).
+rank_tab  <- as.data.frame(rank)
+rank_tab  <- rank_tab[order(-rank_tab$pct_first), ]
+rank_n    <- sum(rank_tab$n_first_place)
+lead_sect <- rank_tab$sector[1]
 
 # ---- UI ---------------------------------------------------------------------
 ui <- page_sidebar(
@@ -242,21 +251,49 @@ ui <- page_sidebar(
      .chart-ctl label { margin-bottom: .1rem; font-size: .78rem;
                         font-weight: 500; opacity: .75; }
      .chart-ctl .form-select, .chart-ctl select { padding-top: .2rem;
-                        padding-bottom: .2rem; font-size: .85rem; }"))),
-  layout_columns(
-    fill = FALSE,
-    value_box(title = "Grade D vs. A intensity (zones with exposure)",
-              value = textOutput("vb_ratio"), theme = "primary"),
-    value_box(title = "Zones mapped in city",
-              value = textOutput("vb_n"), theme = "secondary"),
-    value_box(title = "Most stratified sector",
-              value = textOutput("vb_rail"), theme = "light")
-  ),
+                        padding-bottom: .2rem; font-size: .85rem; }
+     .vb-detail { margin-top: .45rem; display: flex; flex-wrap: wrap;
+                  gap: .25rem; }
+     .vb-chip { font-size: .72rem; font-weight: 600; line-height: 1;
+                padding: .22rem .4rem; border-radius: .2rem; color: #1a1a1a;
+                font-variant-numeric: tabular-nums; }
+     .vb-bars { margin-top: .45rem; font-size: .72rem; }
+     .vb-bar-note { opacity: .6; margin-bottom: .2rem; }
+     .vb-bar-row { display: flex; align-items: center; gap: .35rem;
+                   margin-bottom: .18rem; }
+     .vb-bar-lab { width: 3.9rem; flex: 0 0 auto; }
+     .vb-bar-track { flex: 1 1 auto; height: .42rem; border-radius: .21rem;
+                     background: rgba(0,0,0,.12); }
+     .vb-bar-fill { height: 100%; border-radius: .21rem; }
+     .vb-bar-val { width: 2.2rem; flex: 0 0 auto; text-align: right;
+                   font-variant-numeric: tabular-nums; }"))),
   card(
     full_screen = TRUE, height = 540,
     card_header(textOutput("map_title", inline = TRUE),
                 uiOutput("map_note", inline = TRUE)),
     leafletOutput("map", height = 500)
+  ),
+  # The boxes sit between the map and the chart rather than above the map: two
+  # of the three are read against the map (the city's grade composition, the
+  # D:A ratio the choropleth is a picture of), so they belong after the reader
+  # has seen it, and they no longer push the map itself below the fold.
+  layout_columns(
+    fill = FALSE,
+    value_box(title = "Grade D vs. A intensity (zones with exposure)",
+              value = textOutput("vb_ratio"), theme = "primary"),
+    # The bare total says how much is on screen but not what it is made of, and
+    # grade composition is uneven enough between cities to change how the map
+    # reads -- so the count breaks out A-D, colored to match the legend.
+    value_box(title = "Zones mapped in city",
+              value = textOutput("vb_n"),
+              uiOutput("vb_n_grades"),
+              theme = "secondary"),
+    # Naming only the winner hides how far ahead it is and buries that aviation
+    # out-ranks road, so all three sectors' shares are shown.
+    value_box(title = "Most stratified sector",
+              value = textOutput("vb_rail"),
+              uiOutput("vb_rank_bars"),
+              theme = "light")
   ),
   card(
     height = 430,
@@ -383,7 +420,50 @@ server <- function(input, output, session) {
     if (is.na(mA) || is.na(mD) || mA == 0) "n/a" else sprintf("%.2fx", mD / mA)
   })
   output$vb_n   <- renderText(format(nrow(city_zones()), big.mark = ","))
-  output$vb_rail <- renderText(sprintf("Rail (%.0f%%)", rail_pct))
+
+  # Grade composition of the mapped city. A city with 12 grade-A zones and 300
+  # grade-D zones supports a very different reading of the same choropleth than
+  # an evenly graded one, and grade A is the binding constraint everywhere in
+  # this project -- so the counts sit under the total. Chips are colored with
+  # the same grade palette as the map legend and the chart. factor() over the
+  # full level set keeps a grade with zero zones visible as "0" rather than
+  # silently dropping out of the row.
+  output$vb_n_grades <- renderUI({
+    z <- st_drop_geometry(city_zones())
+    n <- table(factor(z$grade, levels = grade_levels))
+    div(class = "vb-detail",
+        lapply(grade_levels, function(g)
+          span(class = "vb-chip",
+               style = sprintf("background:%s;", grade_cols[[g]]),
+               sprintf("%s %s", g, format(as.integer(n[[g]]), big.mark = ",")))))
+  })
+
+  output$vb_rail <- renderText(sprintf("%s (%.0f%%)", lead_sect,
+                                       rank_tab$pct_first[1]))
+
+  # The full standing behind that headline. Bar widths are the share itself
+  # (the three sum to 100%), not scaled to the leader, so the bars read as the
+  # split of first-place finishes rather than as a ranking. The leader is
+  # darker; the point of showing the other two is that road, the sector a
+  # reader would expect to dominate, comes last.
+  output$vb_rank_bars <- renderUI({
+    div(class = "vb-bars",
+        div(class = "vb-bar-note",
+            sprintf("share of %d first-place finishes", rank_n)),
+        lapply(seq_len(nrow(rank_tab)), function(i) {
+          div(class = "vb-bar-row",
+              title = sprintf("%s: %d of %d", rank_tab$sector[i],
+                              rank_tab$n_first_place[i], rank_n),
+              span(class = "vb-bar-lab", rank_tab$sector[i]),
+              div(class = "vb-bar-track",
+                  div(class = "vb-bar-fill",
+                      style = sprintf("width:%.1f%%; background:%s;",
+                                      rank_tab$pct_first[i],
+                                      if (i == 1) "#2c3e50" else "#9aa7b1"))),
+              span(class = "vb-bar-val",
+                   sprintf("%.0f%%", rank_tab$pct_first[i])))
+        }))
+  })
 
   # ---- choropleth ----
   output$map <- renderLeaflet({
