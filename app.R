@@ -256,13 +256,16 @@ ui <- page_sidebar(
       # Mapping Inequality link is not here -- the sourcing rows below carry it,
       # and citing it twice in one banner is what this rewrite removed.
       p(class = "app-brand-lede",
-        "In the 1930s the federal Home Owners' Loan Corporation (HOLC)",
-        "surveyed more than 200 American cities and rated every neighborhood",
-        "A (best) through D (hazardous) for mortgage lending risk. The grades",
-        "tracked who lived there: neighborhoods with Black, immigrant, and",
-        "low-income residents were routinely marked D, colored red on the map,",
-        "and largely shut out of federally backed mortgage lending, which is",
-        "where the term redlining comes from."),
+        "In response to surging home foreclosures during the Great Depression,",
+        "the federal government established the Home Owners' Loan Corporation",
+        "(HOLC) to buy defaulted mortgages from banks and reissue them as",
+        "longer-term loans owners could afford to repay. For more than 200",
+        "American cities, the agency rated neighborhoods on a four-letter",
+        "grading system of A (best) through D (hazardous) to describe mortgage",
+        "lending risk. The grades tracked who lived there: neighborhoods with",
+        "Black, immigrant, and low-income residents were routinely marked D,",
+        "colored red on the map, and largely shut out of federally backed",
+        "mortgage lending, which is where the term redlining comes from."),
       # Second paragraph answers the question a newcomer actually has, which is
       # why a mortgage map would predict a highway. Both directions are stated
       # because both are documented and they run opposite ways: appraisers
@@ -270,8 +273,10 @@ ui <- page_sidebar(
       # influences, and the interstates came after. Two claims deliberately not
       # made -- that rail shaped the grades (what is documented is the appraisal
       # practice, not the counterfactual) and that highway planners consulted
-      # the HOLC maps (no source; what Archer 2020 documents is shared blight
-      # logic and routing through already-downgraded areas). The close hands the
+      # the HOLC maps (no source for that). Barajas 2021 is the citation on the
+      # highway clause because it makes exactly the supportable claim: redlining
+      # depressed land values, which compounded racially motivated decisions to
+      # site freeways in Black neighborhoods. The close hands the
       # direction of the gradient to the panels rather than promising one:
       # aviation noise is flat across grades and aviation NO peaks at B, so a
       # banner asserting a direction would be contradicted on screen. Every
@@ -282,7 +287,10 @@ ui <- page_sidebar(
         "marked neighborhoods down for nearby rail yards, factories, and smoke, ",
         "so infrastructure already on the ground fed into the grade, and the ",
         "interstate highways built from the 1950s on ran disproportionately ",
-        "through areas that had been graded down. Ninety years later the grades ",
+        "through areas that had been graded down (",
+        ext_link("https://doi.org/10.1016/bs.atpp.2021.06.007",
+                 "Barajas 2021"),
+        "). Ninety years later the grades ",
         "still track environmental burden: formerly D-graded neighborhoods have ",
         "more air pollution (",
         ext_link("https://doi.org/10.1021/acs.estlett.1c01012",
