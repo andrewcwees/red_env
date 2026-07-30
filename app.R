@@ -30,8 +30,8 @@
 #                   surfaces were built from, shown as a locator, not as a
 #                   second estimate of exposure.
 #   * Equity     -> national distribution across HOLC grades A-D (or a
-#                   demographic quintile) for that sector x pollutant, with the
-#                   selected city overlaid. Reports presence and intensity
+#                   demographic quintile) for that sector x pollutant, pooled
+#                   over every city. Reports presence and intensity
 #                   separately: boxes cover zones that HAVE exposure, labels
 #                   give each group's share with none. Both track grade, and
 #                   pooling them overstates the intensity gradient.
@@ -201,6 +201,38 @@ infra_groups <- c(Road = "Highways", Rail = "Rail lines", Aviation = "Airports")
 fill_groups <- c(grade     = "HOLC (grade)",
                  zone_exp  = "HOLC (exposure)",
                  tract_exp = "Tracts (exposure)")
+
+# Segmented control for Source and Type, the same visual language as the view
+# switch: a sunken track with the active option filled blue and its label
+# reversed to white. Three and four options is few enough that a dropdown only
+# hides the choice set behind a click.
+#
+# Stacked vertically, not in a row. A four-across track cannot hold these
+# labels at sidebar width, and the fix is not to abbreviate them: laid out
+# vertically each segment gets the full width, so the pollutants keep their
+# spelled-out names and a reader never has to already know what NO2 is. The
+# cost is vertical space, which the sidebar has.
+#
+# radioButtons rather than a hand-rolled control: it ships the keyboard
+# behavior a radio group is supposed to have (arrow keys move within the
+# group, the whole group is one tab stop) and Shiny already has an input
+# binding for it. The styling hides the native circle and paints the text
+# instead, so the real input is still there to be focused and read out.
+#
+# The served markup is the LEGACY form, not BS5's .form-check, because this
+# `ui` is a static object built before any theme is in scope. So it is
+# div.radio > label > (input + span), the label WRAPPING the input rather than
+# following it. The CSS keys on `input + span` accordingly. Check the served
+# markup with an HTTP fetch before touching those rules; what renderTags gives
+# outside a session is not what the browser receives.
+seg_radio <- function(id, label, choices, selected) {
+  div(
+    class = "seg-input",
+    radioButtons(id, label,
+                 choiceNames  = as.list(names(choices)),
+                 choiceValues = unname(choices), selected = selected)
+  )
+}
 
 # Colors sit off both the exposure ramp (YlOrRd) and the HOLC grade palette
 # (green/blue/yellow/red) so a line is never mistaken for a fill: near-black for
@@ -446,22 +478,28 @@ ui <- page_sidebar(
   fillable = FALSE,
   sidebar = sidebar(
     width = 330,
-    selectizeInput(
-      "city", "City", choices = NULL,  # populated server-side (searchable)
-      # count comes from the bundle so the filter in prep_data.R can change
-      # without stranding a hardcoded number here
-      options = list(placeholder = sprintf("Type to search %d cities...",
-                                           nrow(cities)),
-                     maxOptions = 300)
+    # City is a Map control and nothing else. The Data view is about the
+    # national frame, and a city selector sitting above a national figure
+    # invites the reader to take that figure for the selected city's. Hidden
+    # rather than removed: it stays in the DOM, so the map's observers keep
+    # reading it while the reader is on the other tab.
+    conditionalPanel(
+      condition = "input.view === 'map' || input.view === undefined",
+      selectizeInput(
+        "city", "City", choices = NULL,  # populated server-side (searchable)
+        # count comes from the bundle so the filter in prep_data.R can change
+        # without stranding a hardcoded number here
+        options = list(placeholder = sprintf("Type to search %d cities...",
+                                             nrow(cities)),
+                       maxOptions = 300)
+      )
     ),
-    selectInput("sector", "Emission Source", choices = sectors,
-                selected = "Rail"),
-    selectInput("poll", "Emission Type", choices = pollutants,
-                selected = "Noise"),
-    # City, Emission Source, and Emission Type stay visible in both views: the
-    # first two also pick the chart's overlay city and its tinted panel, and the
-    # third sets which pollutant the whole national view is about. Everything
-    # below this point belongs to one view or the other.
+    seg_radio("sector", "Source", sectors, "Rail"),
+    seg_radio("poll", "Type", pollutants, "Noise"),
+    # Source and Type stay visible in both views: the first tints the chart's
+    # matching panel without driving it, and the second sets which pollutant
+    # the whole national view is about. Everything below this point belongs to
+    # one view or the other.
     #
     # The undefined arm matters throughout: conditionalPanel is evaluated
     # client-side, and on the very first paint input.view may not have arrived
@@ -534,17 +572,17 @@ ui <- page_sidebar(
       # notes live, so it sits with them.
       helpText(
         HTML(sprintf(paste("<b>Basis:</b> every one of the %s HOLC-graded zones",
-                           "in the study, %d cities across %d states. These are",
-                           "the same zones the Map tab draws, so a figure here and a",
-                           "polygon there describe one population. The city",
-                           "selected above changes only the points overlaid on",
-                           "the chart."),
+                           "in the study, %d cities across %d states, pooled.",
+                           "These are the same zones the Map tab draws, so a",
+                           "figure here and a polygon there describe one",
+                           "population. Nothing on this tab is scoped to a",
+                           "single city."),
                      format(nrow(frame), big.mark = ","), frame_cities,
                      frame_states))
       ),
       helpText(
-        HTML("<b>Chart:</b> exposure across every graded zone in the study,",
-             "with the selected city's zones overlaid. Use <b>Group by</b> to",
+        HTML("<b>Chart:</b> exposure across every graded zone in the study.",
+             "Use <b>Group by</b> to",
              "regroup the same zones by HOLC grade or by a demographic quintile",
              "(income, %&nbsp;Hispanic, %&nbsp;Black): does the disparity follow",
              "redlining, income, or present-day demographics?")
@@ -744,6 +782,46 @@ ui <- page_sidebar(
      /* The empty .tabbable leaves the nav's line height behind once the list is
         gone; the panels start at the top of the content area instead. */
      .tabbable > .tab-content { margin-top: 0; }
+     /* Segmented radio groups (Source, Type), stacked vertically. Same track
+        and same blue active fill as the view switch above, so the two read as
+        one control vocabulary. No sliding thumb here: the active segment is
+        painted straight off :checked, an adjacent-sibling match that needs no
+        :has() and so no @supports fallback.
+        Markup is div.radio > label > (input + span) -- see seg_radio(). The
+        span next to the input is the segment surface; the label is only a
+        click target, which is why it carries no padding of its own. */
+     .seg-input { margin-bottom: .8rem; }
+     .seg-input .control-label { margin-bottom: .3rem; font-weight: 600;
+                                 font-size: .8rem; }
+     .seg-input .shiny-options-group { display: flex; flex-direction: column;
+                                       gap: 2px; padding: 3px;
+                                       background: #dfe1e0; border-radius: 999px;
+                                       box-shadow: inset 0 1px 2px rgba(0,0,0,.13); }
+     .seg-input .radio { position: relative; margin: 0; padding: 0;
+                         min-width: 0; }
+     .seg-input .radio > label { display: block; width: 100%; margin: 0;
+                                 padding: 0; cursor: pointer; }
+     /* Hidden but still the real radio: it keeps focus and arrow-key
+        navigation, and the wrapping label makes the whole segment click it. */
+     .seg-input .radio input[type='radio'] { position: absolute; opacity: 0;
+                                             width: 1px; height: 1px;
+                                             margin: 0; pointer-events: none; }
+     .seg-input .radio input + span { display: block;
+                                      padding: .28rem .8rem; border-radius: 999px;
+                                      font-size: .8rem; line-height: 1.4;
+                                      font-weight: 600; letter-spacing: .01em;
+                                      color: #495057;
+                                      transition: background-color .18s ease,
+                                                  color .18s ease; }
+     .seg-input .radio > label:hover input:not(:checked) + span { color: #1d2124;
+                                       background: rgba(255,255,255,.55); }
+     .seg-input .radio input:checked + span { background: #2780e3;
+                                       color: #ffffff;
+                                       box-shadow: 0 1px 3px rgba(0,0,0,.28); }
+     /* Focus has to be drawn here: the real input is invisible, so without
+        this the control is unusable by keyboard. */
+     .seg-input .radio input:focus-visible + span {
+       outline: 2px solid #1a5fa8; outline-offset: 1px; }
      /* Exposure key: ramp plus the nested zero swatch, one box. The swatch sits
         under a rule because it is a different kind of statement from the scale
         above it -- an absence, not a value on it -- and the rule is what stops
@@ -1540,35 +1618,29 @@ server <- function(input, output, session) {
   # the staircase they are supposed to show. Thin IQR bars keep the spread
   # visible as context; the bold line carries the signal.
   output$equity <- renderPlot({
-    req(input$city)
     eb  <- input$eby
     # frame, not zattr: the distribution behind the chart is every graded zone
-    # in the study, and the city overlay below is the subset currently mapped
+    # in the study. This view is national throughout and reads no city input.
     nat <- merge(exp_poll(), frame, by = "HOLCID")
     # guard before the quantile binning below, which fails obscurely ("invalid
     # number of intervals") rather than usefully on an empty slice
     validate(need(nrow(nat) > 0, "No exposure data for this pollutant."))
-    city <- merge(st_drop_geometry(city_zones())["HOLCID"], nat, by = "HOLCID")
 
     if (eb == "grade") {
       nat$bin  <- factor(nat$grade, levels = grade_levels)
-      city$bin <- factor(city$grade, levels = grade_levels)
       xlab  <- "HOLC grade (A = 'best' ... D = 'hazardous')"
       base_lab <- "grade A"
     } else {
-      # quintile breaks are pooled across all sectors and cities, and the SAME
-      # breaks bin the city overlay -- otherwise "Q5" would mean a different
-      # income in the overlay than in the distribution behind it
+      # quintile breaks are pooled across all sectors and cities, which is the
+      # basis the whole view runs on
       br <- unique(quantile(nat[[eb]], probs = seq(0, 1, 0.2), na.rm = TRUE))
       labs_q <- paste0("Q", seq_len(length(br) - 1))
       binq <- function(v) cut(v, breaks = br, include.lowest = TRUE, labels = labs_q)
       nat$bin  <- binq(nat[[eb]])
-      city$bin <- binq(city[[eb]])
       xlab  <- sprintf("%s quintile (Q1 = lowest, Q5 = highest)", eby_label())
       base_lab <- labs_q[1]
     }
     nat$sector  <- factor(nat$sector, levels = names(infra_groups))
-    city$sector <- factor(city$sector, levels = names(infra_groups))
 
     # Presence and intensity are separate disparities and pooling them distorts
     # both. A zone with no measurable exposure is not a low-exposure zone, and
@@ -1580,7 +1652,6 @@ server <- function(input, output, session) {
     zero_tab <- aggregate(list(pct_zero = nat$xp == 0),
                           list(bin = nat$bin, sector = nat$sector), mean)
     nat  <- nat[!is.na(nat$xp) & nat$xp > 0, ]
-    city <- city[!is.na(city$xp) & city$xp > 0, ]
     validate(need(nrow(nat) > 0,
                   "No zone in this view has measurable exposure for this pollutant."))
 
@@ -1594,7 +1665,6 @@ server <- function(input, output, session) {
       if (!is.finite(m) || m <= 0) median(nat$xp[nat$sector == s], na.rm = TRUE) else m
     })
     nat$rel  <- nat$xp  / base_med[as.character(nat$sector)]
-    city$rel <- city$xp / base_med[as.character(city$sector)]
 
     # Axis limits come from the IQR envelope, not the raw range: aviation NO
     # carries a rel value of 5.7e6, which would compress all three panels into a
@@ -1615,8 +1685,6 @@ server <- function(input, output, session) {
                 ymin = -Inf, ymax = Inf, fill = "#fff8e1", alpha = 0.55) +
       geom_hline(yintercept = 1, linetype = "dashed", colour = "grey55",
                  linewidth = 0.4) +
-      geom_jitter(data = city, width = 0.14, height = 0, size = 1,
-                  colour = "#111111", alpha = 0.35) +
       stat_summary(fun.min = function(v) quantile(v, .25),
                    fun.max = function(v) quantile(v, .75),
                    geom = "linerange", colour = "grey45", linewidth = 0.7,
@@ -1643,8 +1711,7 @@ server <- function(input, output, session) {
                      base_lab),
              "Line: median among zones with exposure. Bars: IQR. ",
              "Grey %: share with none.",
-             sprintf("\nPoints: %s. Log axis, clipped to the IQR envelope.",
-                     input$city))) +
+             "\nLog axis, clipped to the IQR envelope.")) +
       theme_minimal(base_size = 13) +
       theme(panel.grid.major.x = element_blank(),
             strip.text = element_text(face = "bold", size = 12),
