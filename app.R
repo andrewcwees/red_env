@@ -566,16 +566,16 @@ ui <- page_sidebar(
       # Mapping Inequality link is not here -- the sourcing rows below carry it,
       # and citing it twice in one banner is what this rewrite removed.
       p(class = "app-brand-lede",
-        "In response to surging home foreclosures during the Great Depression,",
-        "the federal government established the Home Owners' Loan Corporation",
-        "(HOLC) to buy defaulted mortgages from banks and reissue them as",
-        "longer-term loans owners could afford to repay. For more than 200",
-        "American cities, the agency rated neighborhoods on a four-letter",
-        "grading system of A (best) through D (hazardous) to describe mortgage",
-        "lending risk. The grades tracked who lived there: neighborhoods with",
-        "Black, immigrant, and low-income residents were routinely marked D,",
-        "colored red on the map, and largely shut out of federally backed",
-        "mortgage lending, which is where the term redlining comes from."),
+        "Home foreclosures surged during the Great Depression, prompting the",
+        "federal government to establish the temporary Home Owners' Loan",
+        "Corporation (HOLC) to buy defaulted mortgages from banks and reissue",
+        "them on more forgiving terms. For more than 200 cities where HOLC",
+        "bought assets, the agency rated neighborhoods on a four-letter grading",
+        "system of A (best) through D (hazardous) to describe mortgage lending",
+        "risk. The grades tracked who lived there: neighborhoods with Black,",
+        "immigrant, and low-income residents were routinely marked D, colored",
+        "red on the map, and largely shut out of federally backed mortgage",
+        "lending, which is where the term redlining comes from."),
       # Second paragraph answers the question a newcomer actually has, which is
       # why a mortgage map would predict a highway. Both directions are stated
       # because both are documented and they run opposite ways: appraisers
@@ -586,21 +586,25 @@ ui <- page_sidebar(
       # the HOLC maps (no source for that). Barajas 2021 is the citation on the
       # highway clause because it makes exactly the supportable claim: redlining
       # depressed land values, which compounded racially motivated decisions to
-      # site freeways in Black neighborhoods. The close hands the
-      # direction of the gradient to the panels rather than promising one:
-      # aviation noise is flat across grades and aviation NO peaks at B, so a
-      # banner asserting a direction would be contradicted on screen. Every
-      # citation sits mid-sentence, so this paragraph is one HTML string for the
-      # reason ext_link() exists.
+      # site freeways in Black neighborhoods. The citation sits mid-sentence, so
+      # the paragraph is one HTML string for the reason ext_link() exists.
       p(class = "app-brand-lede", HTML(paste0(
-        "Transportation runs through this story in both directions. Appraisers ",
-        "marked neighborhoods down for nearby rail yards, factories, and smoke, ",
-        "so infrastructure already on the ground fed into the grade, and the ",
-        "interstate highways built from the 1950s on ran disproportionately ",
-        "through areas that had been graded down (",
+        "Transportation is part of this story. Appraisers marked down ",
+        "neighborhoods located near emission sources like rail yards and ",
+        "factories, so the placement of existing infrastructure fed into the ",
+        "assignment of grades. In the 1950s, the construction of interstate ",
+        "highways ran disproportionately through areas that had been graded ",
+        "down (",
         ext_link("https://doi.org/10.1016/bs.atpp.2021.06.007",
                  "Barajas 2021"),
-        "). Ninety years later the grades ",
+        ")."))),
+      # Third paragraph is the present day, split out from the history so the
+      # banner reads as then / how transportation enters / now. The close hands
+      # the direction of the gradient to the panels rather than promising one:
+      # aviation noise is flat across grades and aviation NO peaks at B, so a
+      # banner asserting a direction would be contradicted on screen.
+      p(class = "app-brand-lede", HTML(paste0(
+        "Ninety years later the grades ",
         "still track environmental burden: formerly D-graded neighborhoods have ",
         "more air pollution (",
         ext_link("https://doi.org/10.1021/acs.estlett.1c01012",
