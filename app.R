@@ -136,6 +136,15 @@ pollutants <- c("Noise (LAeq,24)"         = "Noise",
                 "Nitrogen Dioxide (NO₂)" = "NO2",
                 "Fine Particulate Matter (PM2.5)" = "PM25")
 poll_lab   <- c(Noise = "noise", NO = "NO", NO2 = "NO₂", PM25 = "PM2.5")
+# Segment labels for Type. Source and Type sit side by side as a T-chart, so
+# each column is about half the sidebar and there is no room for "Fine
+# Particulate Matter (PM2.5)". The segments carry the short forms the map and
+# chart headers already use, and the spelled-out names from `pollutants` ride
+# along as title tooltips, so the abbreviation is not the only place a reader
+# can learn what NO2 is. Same name-is-label, value-is-data convention as
+# `pollutants`: the data spells it PM25, so the value must too.
+poll_seg   <- c("Noise" = "Noise", "NO" = "NO",
+                "NO₂"  = "NO2",   "PM2.5" = "PM25")
 
 grade_levels <- c("A", "B", "C", "D")
 # canonical HOLC grade colors (green/blue/yellow/red)
@@ -207,11 +216,10 @@ fill_groups <- c(grade     = "HOLC (grade)",
 # reversed to white. Three and four options is few enough that a dropdown only
 # hides the choice set behind a click.
 #
-# Stacked vertically, not in a row. A four-across track cannot hold these
-# labels at sidebar width, and the fix is not to abbreviate them: laid out
-# vertically each segment gets the full width, so the pollutants keep their
-# spelled-out names and a reader never has to already know what NO2 is. The
-# cost is vertical space, which the sidebar has.
+# Laid out as a T-chart: Source and Type side by side as two columns, each
+# with its options stacked under its own heading. Reading down a column is
+# what compares the options within one axis, and the two axes sit level with
+# each other rather than one above the other.
 #
 # radioButtons rather than a hand-rolled control: it ships the keyboard
 # behavior a radio group is supposed to have (arrow keys move within the
@@ -225,11 +233,13 @@ fill_groups <- c(grade     = "HOLC (grade)",
 # following it. The CSS keys on `input + span` accordingly. Check the served
 # markup with an HTTP fetch before touching those rules; what renderTags gives
 # outside a session is not what the browser receives.
-seg_radio <- function(id, label, choices, selected) {
+seg_radio <- function(id, label, choices, selected, titles = NULL) {
+  labs <- if (is.null(titles)) as.list(names(choices))
+          else mapply(function(n, t) span(title = t, n), names(choices), titles,
+                      SIMPLIFY = FALSE, USE.NAMES = FALSE)
   div(
     class = "seg-input",
-    radioButtons(id, label,
-                 choiceNames  = as.list(names(choices)),
+    radioButtons(id, label, choiceNames = labs,
                  choiceValues = unname(choices), selected = selected)
   )
 }
@@ -494,8 +504,10 @@ ui <- page_sidebar(
                        maxOptions = 300)
       )
     ),
-    seg_radio("sector", "Source", sectors, "Rail"),
-    seg_radio("poll", "Type", pollutants, "Noise"),
+    div(class = "seg-pair",
+        seg_radio("sector", "Source", sectors, "Rail"),
+        seg_radio("poll", "Type", poll_seg, "Noise",
+                  titles = names(pollutants))),
     # Source and Type stay visible in both views: the first tints the chart's
     # matching panel without driving it, and the second sets which pollutant
     # the whole national view is about. Everything below this point belongs to
@@ -790,6 +802,11 @@ ui <- page_sidebar(
         Markup is div.radio > label > (input + span) -- see seg_radio(). The
         span next to the input is the segment surface; the label is only a
         click target, which is why it carries no padding of its own. */
+     /* T-chart: the two axes side by side, equal columns so neither reads as
+        the primary one. min-width:0 or a long label pushes its column wider
+        than its half. */
+     .seg-pair { display: flex; gap: .55rem; align-items: start; }
+     .seg-pair > .seg-input { flex: 1 1 0; min-width: 0; }
      .seg-input { margin-bottom: .8rem; }
      .seg-input .control-label { margin-bottom: .3rem; font-weight: 600;
                                  font-size: .8rem; }

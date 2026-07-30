@@ -23,7 +23,9 @@
 #            grade + zone demographics; simplified, EPSG:4326
 #   exp    - HOLCID x sector x pollutant -> xp, logxp
 #            (Rail + Road + Aviation; NO CEI, NO Total -- CEI is structurally
-#            broken, Total is a sum of the three and carries no separate story)
+#            broken. Total is dropped, but NOT because it is always a sum:
+#            that holds for the air pollutants only. See the note at the
+#            keep_sectors filter below before restoring it.)
 #   cities - searchable city selector table (place, city, state, n_zones)
 #   rank   - sector first-place ranking summary (the anchor finding), re-tallied
 #            with the CEI comparison dropped
@@ -97,8 +99,22 @@ xp <- xp_all[group %in% c("Grade A", "Grade B", "Grade C", "Grade D")]  # graded
 # Scoped to the rows that actually get carried. CEI goes negative (down to
 # -1.14, it is a standardized index rather than a concentration), so log1p is
 # undefined on it and a check across the whole file fails on a column no part
-# of this app ever reads. Same for Total, which is dropped as a sum of the
-# three sectors. Tolerance is 2e-3 because logxp is stored rounded.
+# of this app ever reads. Total is excluded here too.
+#
+# Why Total is dropped, stated properly because the short version is wrong.
+# For the AIR pollutants it really is Rail + Road + Aviation (every zone
+# within 1%), and Road is 98.4-99.0% of that mass, so a Total view would
+# duplicate the Road view exactly: indexed A->D, Total NO is 1.00/1.14/1.20/
+# 1.19 against Road NO's 1.00/1.14/1.20/1.19.
+# For NOISE it is NOT a sum and not derived from the three at all. comp.R
+# reads BTS's own `rail_road_and_aviation` layer as a fourth sector; it is not
+# the arithmetic sum (median 1.48 off), not the max (matches 1% of zones), and
+# not the energetic dB sum (median 3.5 dB off). Its gradient is its own:
+# 1.00/1.42/1.73/2.08, monotone, between road (1.40) and rail (2.96), with 0%
+# zeros. Left out of the app deliberately, since a Source valid for one of
+# four Types costs more than it explains -- but it is a real measure, not a
+# redundant one, and is carried in context.md as an analysis lead.
+# Tolerance is 2e-3 because logxp is stored rounded.
 chk <- xp_all[sector %in% keep_sectors & !(pollutant %in% drop_pollutants)]
 stopifnot(max(abs(chk$logxp - log1p(chk$xp)), na.rm = TRUE) < 2e-3)
 rm(chk)
