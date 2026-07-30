@@ -8,9 +8,15 @@
 # HOLCID = label_state_city_grade, is built identically to the zone ID in
 # xp_out.csv (see scripts/compile/clean.R), so the join is exact -- all 8,920
 # graded zones match. (Native holc_maps.gpkg polygons exist but key on a
-# different label field, so the crosswalk is the clean join.) The thin-city
-# filter below then takes those 8,920 zones / 221 cities down to the 2,826
-# zones / 14 cities that reach the app.
+# different label field, so the crosswalk is the clean join.)
+#
+# EVERY city in the study frame is mapped: min_zones is 0, so the selector
+# carries all 221 cities and the map and the statistics answer to the same
+# 8,920 zones. The thin-city cutoff that used to narrow the map to 14 large
+# cities is gone, and with it the two-number-bases problem it created. What
+# made removing it viable is the tract layer below: a city with nine graded
+# zones no longer renders as nine polygons floating in white space, because
+# the tract layer covers the whole city view underneath them.
 #
 # Bundle contents (list):
 #   zones  - one sf POLYGON row per HOLC zone: HOLCID, place, city, state,
@@ -22,11 +28,16 @@
 #   rank   - sector first-place ranking summary (the anchor finding), re-tallied
 #            with the CEI comparison dropped
 #   rank_cmp - how many pollutant x measure comparisons that tally covers
-#   frame  - ALL 8,920 graded zones, no geometry: HOLCID, place, grade + the
-#            three variables the equity chart groups by. The statistics run on
-#            this; the map runs on `zones`, which the thin-city filter narrows
-#            to 14 cities. Two populations, deliberately.
+#   frame  - all 8,920 graded zones, no geometry: HOLCID, place, grade + the
+#            three variables the equity chart groups by. Same population as
+#            `zones` now that min_zones is 0; kept as its own table because the
+#            plots need no geometry and the cutoff may be raised again.
 #   exp_frame - HOLCID x sector x pollutant -> xp for all 8,920 zones
+#   tracts - one sf POLYGON row per census tract intersecting any mapped city:
+#            GEOID, inc, pop_total, pdens. NOT clipped to the city box (see
+#            section 6), and carried once however many cities it serves.
+#   tract_city - place x GEOID membership, the per-city lookup for `tracts`
+#   exp_tract  - GEOID x sector x pollutant -> xp for those tracts
 #   infra  - list(road, rail, avi): NTAD transportation infrastructure clipped
 #            to each mapped city, for the map's overlay layers
 #
@@ -57,16 +68,40 @@ d_ntad  <- "D:/research/redenv/data/ntnm"   # NTAD infrastructure geojsons
 
 keep_sectors    <- c("Rail", "Road", "Aviation")
 drop_pollutants <- c("CEI")
-min_zones       <- 100  # drop thin-coverage cities (< min_zones graded zones)
+# 0 = map every city in the frame. Kept as a constant rather than deleted: the
+# filter is one line and the app still tolerates a narrower map, so raising this
+# stays a one-number change.
+min_zones       <- 0
 
 # infrastructure overlay (section 5)
 road_fclass <- c(1, 2)  # HPMS functional class: 1 interstate, 2 other freeway
 infra_pad   <- 0.12     # city bbox padding (fraction of extent) for the clip
 infra_tol   <- 30       # line simplification tolerance, metres (EPSG:5070)
 
+# No polygon simplification tolerance: zones and tracts both ship at full
+# resolution because independent per-feature simplification breaks shared
+# borders (see sections 2 and 6). infra_tol still applies to the overlay, where
+# lines share no borders and the flaw cannot arise.
+
 # 1. exposure + demographics from xp_out.csv --------------------------------
-xp <- fread(file.path(d_out, "xp_out.csv"))
-xp <- xp[group %in% c("Grade A", "Grade B", "Grade C", "Grade D")]  # graded zones only
+# xp_all keeps every group because section 6 needs the all_tract rows; xp is the
+# graded-zone slice everything else works from.
+xp_all <- fread(file.path(d_out, "xp_out.csv"))
+xp <- xp_all[group %in% c("Grade A", "Grade B", "Grade C", "Grade D")]  # graded zones only
+
+# logxp is just log1p(xp) rounded to 3 dp (comb.R), so the tract table in
+# section 6 carries xp alone and the app recomputes. Checked here rather than
+# assumed, and checked early, because the tract table is ~300k rows and the
+# saving is real.
+#
+# Scoped to the rows that actually get carried. CEI goes negative (down to
+# -1.14, it is a standardized index rather than a concentration), so log1p is
+# undefined on it and a check across the whole file fails on a column no part
+# of this app ever reads. Same for Total, which is dropped as a sum of the
+# three sectors. Tolerance is 2e-3 because logxp is stored rounded.
+chk <- xp_all[sector %in% keep_sectors & !(pollutant %in% drop_pollutants)]
+stopifnot(max(abs(chk$logxp - log1p(chk$xp)), na.rm = TRUE) < 2e-3)
+rm(chk)
 
 # 1a. exposure slice: Rail + Road, no CEI, logxp carries the coloring
 exp <- xp[sector %in% keep_sectors & !(pollutant %in% drop_pollutants),
@@ -85,13 +120,18 @@ stopifnot(!anyDuplicated(demo$HOLCID))
 zone_ids <- unique(exp$HOLCID)
 cw <- st_read(file.path(d_out, "cw.gpkg"), quiet = TRUE) |> st_make_valid()
 
+# NOT simplified. st_simplify works on one feature at a time, so two polygons
+# sharing a border each get their own simplification of it and the two copies
+# stop matching: the result is slivers and gaps along every shared edge. At a
+# 50m tolerance this cost LA 1.01 km2 of overlap across 546 border-sharing zone
+# pairs. preserveTopology = TRUE does not help -- it preserves each feature's
+# own topology, never the topology between features. Any tolerance has the
+# defect; a smaller one only makes the slivers smaller. See the tract note in
+# section 6, where the same flaw was far worse.
 zones <- cw |>
   filter(HOLCID %in% zone_ids) |>
   group_by(HOLCID, city, state, grade) |>
   summarise(.groups = "drop") |>
-  # simplify in an equal-area CRS, then back to WGS84 for leaflet
-  st_transform(5070) |>
-  st_simplify(dTolerance = 50, preserveTopology = TRUE) |>
   st_transform(4326) |>
   st_make_valid() |>
   mutate(place = paste0(city, ", ", state)) |>
@@ -102,23 +142,22 @@ zones <- cw |>
 cat(sprintf("zone polygons: %d / %d exposure zones matched\n",
             nrow(zones), length(zone_ids)))
 
-# 2a. drop thin-coverage cities ---------------------------------------------
-# Cities with very few graded zones render sparse, unreadable maps and unstable
-# per-city summaries. Filtering them (and their zones) also keeps the national
-# equity reference restricted to adequately-covered cities.
+# 2a. thin-coverage city filter (inert at min_zones = 0) ---------------------
+# The objection this answered was that a city with a handful of graded zones
+# renders as a few polygons in an empty frame. The tract layer answers it
+# better: the whole city view is covered, and the graded zones sit inside a
+# surface that shows what the rest of the city is exposed to. So every city is
+# mapped, and this stays only as the knob to turn if that judgement reverses.
 zone_counts <- zones |> st_drop_geometry() |> count(place, name = "n_zones")
 keep_places <- zone_counts$place[zone_counts$n_zones >= min_zones]
 n_dropped_cities <- nrow(zone_counts) - length(keep_places)
 n_dropped_zones  <- sum(zone_counts$n_zones[zone_counts$n_zones < min_zones])
 
 # 2b. the full study frame, captured BEFORE the thin-city filter -------------
-# The map and the statistics answer to different populations and now say so.
-# min_zones exists to keep the choropleth legible, which is a display concern
-# and no reason to narrow the statistics: the frame is every graded zone the
-# study analyses, and the survivors of the filter are all large cities, so the
-# two bases differ materially (rail noise D:A is 3.0x on the frame and 2.0x on
-# the 14-city bundle). Geometry is dropped here -- the frame drives plots only,
-# never the map, so 8,920 polygons would be dead weight in the bundle.
+# At min_zones = 0 this is the same population the map draws, so the app's
+# figures and its choropleth finally describe one thing. The table is still
+# built separately because it drops geometry: the plots never draw a polygon,
+# and carrying 8,920 of them a second time would be dead weight.
 frame <- zones |>
   st_drop_geometry() |>
   select(HOLCID, place, grade, inc, pct_hisp, pct_blk)
@@ -205,15 +244,28 @@ city_box <- function(pl, pad = infra_pad) {
                     crs = 4326))
 }
 boxes <- setNames(lapply(places, city_box), places)
+# The boxes as one sf, so membership is a single indexed spatial predicate
+# rather than 221 full passes over a national layer.
+boxes_sf <- st_sf(place = places, geometry = do.call(c, boxes))
 
 # clip one national layer to every city, tagging rows with the city they serve.
 # A feature spanning two mapped cities is emitted once per city, which is what
 # a per-city lookup needs.
+#
+# st_intersects first, st_crop second. At 14 cities cropping the whole layer per
+# city was merely wasteful; at 221 it is quadratic enough to matter, because
+# every call scans all 500k+ segments to keep a few hundred. The predicate is
+# indexed, so one pass assigns candidates to boxes and each crop then runs on
+# the handful of features that can possibly survive it.
 clip_to_cities <- function(x, simplify = TRUE) {
-  parts <- lapply(places, function(pl) {
+  hits <- st_intersects(boxes_sf, x)
+  parts <- lapply(seq_along(places), function(i) {
+    pl  <- places[i]
+    idx <- hits[[i]]
+    if (!length(idx)) return(NULL)
     # st_crop clips in lon/lat and says so on every call; the boxes are city-
     # sized, where the planar assumption costs nothing
-    y <- suppressMessages(suppressWarnings(st_crop(x, boxes[[pl]])))
+    y <- suppressMessages(suppressWarnings(st_crop(x[idx, ], boxes[[pl]])))
     if (!nrow(y)) return(NULL)
     if (simplify) {
       y <- y |> st_transform(5070) |> st_simplify(dTolerance = infra_tol) |>
@@ -287,9 +339,77 @@ cat(sprintf("airports: %d (%d towered) across %d cities\n", nrow(avi),
 
 infra <- list(road = road, rail = rail, avi = avi)
 
-# 6. save bundle ------------------------------------------------------------
+# 6. census tract exposure layer --------------------------------------------
+# The HOLC layer can only ever answer for graded neighborhoods, which is a
+# minority of any city and, in the thin cities now back in the selector, a very
+# small minority. The tract layer draws the same modeled exposure across the
+# whole city view, so the question the choropleth answers changes from "how does
+# exposure vary among graded neighborhoods" to "where do the graded
+# neighborhoods sit in the city's own exposure surface".
+#
+# Units are directly comparable: comb.R builds a zone's xp as the area-weighted
+# mean of the tracts intersecting it, so a zone value and a tract value are the
+# same quantity at two resolutions. That is what lets the app fit ONE per-city
+# color ramp across both layers, which is the entire point -- a reader flipping
+# between them sees the same color mean the same thing.
+#
+# Geometry is NOT clipped to the city box, unlike the infrastructure lines. A
+# clipped tract gets a straight artificial edge that reads as a real boundary,
+# and tracts are areal units where that misleads; lines have no such problem.
+# The cost is that edge tracts run past the default view, which is harmless.
+# Each tract is carried once however many city boxes it falls in, with
+# membership in a side table, so the overlapping metros do not duplicate
+# polygons.
+cat("-- census tracts --\n")
+tracts <- st_read(file.path(d_out, "noise_tract.gpkg"), layer = "noise_tract",
+                  quiet = TRUE)
+tracts <- tracts[, c("TRACTID", "inc", "pop_total", "pdens")]
+names(tracts)[names(tracts) == "TRACTID"] <- "GEOID"
+# NOT simplified, and this layer is why the rule matters. Tracts tessellate:
+# every interior edge is shared with a neighbour, so simplifying each polygon
+# independently desynchronises both copies of every one of them. At 150m the LA
+# tract layer came out with 29 km2 of overlap, 59 km2 of territory lost, and
+# 1,459 holes punched between neighbours against 20 in the source, which is
+# what a reader sees as polygons that do not fit together.
+#
+# The proper fix is topology-aware simplification (rmapshaper::ms_simplify
+# builds a shared-arc topology and simplifies each arc once, so both sides of a
+# border move together). That would cut this layer back to roughly a third of
+# its size and is worth doing if the bundle needs to shrink. It is not used here
+# only because installing it needs an Rcpp upgrade that cannot complete while
+# another R process holds the DLL.
+tracts <- tracts |>
+  st_transform(4326) |>
+  st_make_valid()
+tracts <- tracts[!st_is_empty(tracts), ]
+
+tract_hits <- st_intersects(boxes_sf, tracts)
+tract_city <- data.table(place = rep(places, lengths(tract_hits)),
+                         GEOID = tracts$GEOID[unlist(tract_hits)])
+tracts <- tracts[tracts$GEOID %in% tract_city$GEOID, ]
+cat(sprintf("tracts: %d kept, %d place-tract pairs across %d cities\n",
+            nrow(tracts), nrow(tract_city), uniqueN(tract_city$place)))
+
+# xp only -- logxp is log1p(xp), checked in section 1, and at ~300k rows the
+# second column is not worth its weight in the bundle.
+exp_tract <- xp_all[group == "all_tract" & sector %in% keep_sectors &
+                    !(pollutant %in% drop_pollutants),
+                    .(GEOID = ID, sector, pollutant, xp)]
+exp_tract <- exp_tract[GEOID %in% tracts$GEOID]
+setkey(exp_tract, GEOID, sector, pollutant)
+cat(sprintf("tract exposure rows: %d (%d tracts matched of %d)\n",
+            nrow(exp_tract), uniqueN(exp_tract$GEOID), nrow(tracts)))
+
+# The shared ramp only works if the two layers really are on one scale; a gross
+# mismatch would mean comb.R's weighting is not what section 6 assumes.
+zr <- range(exp$xp[exp$xp > 0]); tr_r <- range(exp_tract$xp[exp_tract$xp > 0])
+cat(sprintf("xp range  zones: %.3g to %.3g   tracts: %.3g to %.3g\n",
+            zr[1], zr[2], tr_r[1], tr_r[2]))
+
+# 7. save bundle ------------------------------------------------------------
 saveRDS(list(zones = zones, exp = exp, cities = cities, rank = rank,
              rank_cmp = n_cmp, frame = frame, exp_frame = exp_frame,
+             tracts = tracts, tract_city = tract_city, exp_tract = exp_tract,
              infra = infra),
         file.path(app_dir, "redenv_data.rds"))
 sz <- file.info(file.path(app_dir, "redenv_data.rds"))$size

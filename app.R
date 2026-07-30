@@ -6,12 +6,21 @@
 # transportation-sector environmental exposure across neighborhoods graded by
 # the 1930s HOLC ("redlining") maps, and shows how exposure tracks HOLC grade.
 #
-#   * Map        -> HOLC zones filled by exposure (log scale) or by HOLC grade,
-#                   for a chosen transportation sector x pollutant. The ramp is
-#                   fitted to the selected city, so it reads the within-city
-#                   spread and colors do not compare across cities. Zones with
-#                   no measurable exposure get their own color, not the bottom
-#                   of the ramp.
+#   * Map        -> three mutually exclusive fills for a chosen sector x
+#                   pollutant: HOLC zones by exposure (log scale), census tracts
+#                   by exposure, or HOLC zones by grade. The ramp is fitted to
+#                   the selected city and SHARED by the two exposure fills, so
+#                   switching between them answers "where do the graded zones
+#                   sit in this city's exposure surface" -- which is what the
+#                   tract layer is for, since graded zones are a minority of any
+#                   city. Colors do not compare across cities. Areas with no
+#                   measurable exposure get their own color, not the bottom of
+#                   the ramp.
+#   * Coverage   -> every city in the study frame is selectable (221 cities,
+#                   8,920 graded zones). The thin-city cutoff that once narrowed
+#                   the map to 14 large cities is gone; the tract layer answers
+#                   the sparse-map objection that motivated it, and the map and
+#                   the statistics now describe one population.
 #   * Overlay    -> the infrastructure itself: interstates and freeways, rail
 #                   track, airports. The choropleth says which zones are
 #                   exposed; the overlay says to what. The layer matching the
@@ -26,12 +35,10 @@
 #                   separately: boxes cover zones that HAVE exposure, labels
 #                   give each group's share with none. Both track grade, and
 #                   pooling them overstates the intensity gradient.
-#   * Value boxes-> between the map and the chart, because two of the three read
-#                   off the map above them: Grade D-vs-A intensity ratio (same
-#                   basis as the chart), the selected city's zone count broken
-#                   out by HOLC grade, and the anchor finding (rail is the most
-#                   stratified sector) with the other two sectors' shares beside
-#                   it rather than only the winner.
+#   * Figures    -> per-city figures (grade counts, zero share, city rank) sit
+#                   in the Map sidebar beside the selectors that drive them. The
+#                   Data tab carries the D-vs-A box, an A-to-D staircase indexed
+#                   to grade A, and the equity chart.
 #
 # Scope is deliberately hedged (see interactive_display_plan_2026-07-14.md):
 # Rail + Road + Aviation, no combined index (CEI), descriptive framing only --
@@ -67,17 +74,44 @@ rank   <- d$rank
 rank_cmp <- d$rank_cmp   # pollutant x measure comparisons behind the tally
 infra  <- d$infra        # road / rail / avi geometry, clipped per city
 
-# The map and the statistics answer to different populations. `zones` is the
-# 14-city display bundle the thin-city filter leaves behind; `frame` is all
-# 8,920 graded zones the study analyses. Every plot and stat below reads the
-# frame -- min_zones exists to keep the choropleth legible and is no reason to
-# narrow the numbers. The gap is material, not cosmetic (rail noise D:A is
-# 2.96x on the frame against 2.0x on the bundle), so anything quoting either
-# must say which, and the stats panel states its basis on screen.
+# Census tract layer. The HOLC layer only ever covers graded neighborhoods --
+# a minority of any city, and a very small one in the thin cities that are now
+# back in the selector. Tracts cover the whole city view, so the map can show
+# where the graded zones sit inside their city's exposure surface rather than
+# only how graded zones compare with each other. Carried once per tract with
+# city membership in a side table, because metros overlap.
+tracts     <- d$tracts
+tract_city <- as.data.frame(d$tract_city)
+exp_tract  <- as.data.frame(d$exp_tract)
+# logxp is log1p(xp) upstream (checked in prep_data.R), so the ~300k-row tract
+# table ships without it and the one column it needs is derived here, once.
+exp_tract$logxp <- log1p(exp_tract$xp)
+
+# `frame` is every graded zone the study analyses and drives every plot and
+# stat; `zones` is the same population carrying geometry, and drives the map.
+# They were different populations while a thin-city cutoff narrowed the map to
+# 14 large cities, which forced every figure to state which basis it used
+# (rail noise D:A read 2.96x on one and 2.0x on the other). The cutoff is gone,
+# so that distinction is retired -- the two tables now differ only in whether
+# they carry polygons, which is why both still exist.
 frame     <- as.data.frame(d$frame)
 exp_frame <- as.data.frame(d$exp_frame)
 frame_cities <- length(unique(frame$place))
 frame_states <- length(unique(sub(".*, ", "", frame$place)))
+
+# Ceiling for the D-vs-A staircase bars: the largest grade index anywhere in the
+# frame (rail NO at grade D, 2.98x). The bars are lengths on a FIXED axis rather
+# than rescaled to whichever selection is on screen, because a flat sector has to
+# look flat beside a steep one -- rescaling per selection makes aviation NO2
+# (1.09x at its peak) draw the same picture as rail NO (2.98x), which is the
+# opposite of what the figure is for. Computed rather than hardcoded so it
+# follows the data if prep_data.R changes.
+grade_idx_max <- local({
+  e <- merge(exp_frame, frame[, c("HOLCID", "grade")], by = "HOLCID")
+  e <- e[!is.na(e$xp) & e$xp > 0, ]
+  m <- tapply(e$xp, list(paste(e$sector, e$pollutant), e$grade), median)
+  max(m / m[, "A"], na.rm = TRUE)   # matrix / vector divides down each column
+})
 
 # Estimated zone population. The pipeline's pop_total is an area-weighted MEAN
 # of the intersecting tracts' totals (comb.R multiplies every numeric column by
@@ -158,6 +192,16 @@ tiles_for <- function(map, which) {
 # once over a choropleth is unreadable.
 infra_groups <- c(Road = "Highways", Rail = "Rail lines", Aviation = "Airports")
 
+# The three mutually exclusive fill layers, named once. Every clearGroup,
+# hideGroup and the layers control read from here, so a relabel is one edit and
+# cannot leave a stale group name behind that silently stops clearing a layer.
+# Labels are unit-first ("HOLC", "Tracts") with the variable in parentheses, so
+# the control groups the two HOLC fills together and the reader picks a unit
+# before picking what colors it.
+fill_groups <- c(grade     = "HOLC (grade)",
+                 zone_exp  = "HOLC (exposure)",
+                 tract_exp = "Tracts (exposure)")
+
 # Colors sit off both the exposure ramp (YlOrRd) and the HOLC grade palette
 # (green/blue/yellow/red) so a line is never mistaken for a fill: near-black for
 # road, violet for rail, cyan for airports (the last two matching the project's
@@ -178,6 +222,53 @@ avi_col <- "#00e5ff"
 # city selector choices: "Birmingham, AL" -> "Birmingham, AL". The map is
 # always a single city; there is no all-cities view.
 city_choices <- setNames(cities$place, cities$place)
+
+# The exposure key: a continuous ramp with the "no measurable exposure" swatch
+# nested underneath it in the same box, above a rule that marks it as a separate
+# reading rather than another step on the scale.
+#
+# The bar is a CSS gradient sampled from the palette, drawn bottom-to-top so the
+# high end sits at the top the way leaflet's own vertical legend reads. Ticks
+# are positioned as percentages of the domain rather than spaced evenly, so a
+# domain whose pretty() breaks are not evenly spread still labels honestly.
+#
+# p is NULL when the city has no nonzero values at all, in which case there is
+# no ramp to draw and the key is the zero swatch alone -- which is the whole
+# story for that view, and still needs saying.
+exposure_key <- function(p, vals, has_zero) {
+  zero_row <- if (has_zero)
+    div(class = "lg-zero",
+        span(class = "lg-sw", style = sprintf("background:%s;", zero_col)),
+        "No measurable exposure")
+
+  if (is.null(p) || !length(vals))
+    return(tags$div(class = "lg", div(class = "lg-title", "Exposure"),
+                    zero_row))
+
+  rng   <- range(vals)
+  stops <- if (rng[1] == rng[2]) rep(rng[1], 2) else seq(rng[1], rng[2], length.out = 12)
+  grad  <- paste(p(stops), collapse = ", ")
+  ticks <- pretty(rng, n = 3)
+  ticks <- ticks[ticks >= rng[1] & ticks <= rng[2]]
+  if (length(ticks) < 2) ticks <- rng
+  pct <- if (rng[2] > rng[1]) 100 * (ticks - rng[1]) / (rng[2] - rng[1])
+         else rep(50, length(ticks))
+
+  tags$div(
+    class = "lg",
+    div(class = "lg-title", HTML(paste0(
+      "Exposure<br/><small>log(xp+1), scaled within city<br/>",
+      "zones and tracts on one scale</small>"))),
+    div(class = "lg-ramp",
+        div(class = "lg-bar",
+            style = sprintf("background:linear-gradient(to top, %s);", grad)),
+        div(class = "lg-ticks",
+            lapply(seq_along(ticks), function(i)
+              span(class = "lg-tick", style = sprintf("bottom:%.1f%%;", pct[i]),
+                   sprintf("%.1f", ticks[i]))))),
+    zero_row
+  )
+}
 
 # 78 -> "78th", for the city's percentile in the national spread. The 11-13
 # exception is why this is not a switch on the last digit alone.
@@ -342,7 +433,13 @@ ui <- page_sidebar(
             "<b>Infrastructure overlay.</b> ",
             ext_link("https://www.bts.gov/ntad",
                      "National Transportation Atlas Database"),
-            ", US Bureau of Transportation Statistics.")))))
+            ", US Bureau of Transportation Statistics."))))),
+      # Attribution and status, under the sourcing rows and dimmer than them.
+      # Says who the work belongs to and that it is not a published result;
+      # matches the same line in the phxmob app.
+      div(class = "app-brand-source",
+          HTML(paste0("HUM.Lab, University of Arizona.<br/>",
+                      "Work sample, not a published result.")))
     )
   ),
   theme = bs_theme(version = 5, bootswatch = "cosmo"),
@@ -405,24 +502,46 @@ ui <- page_sidebar(
       # Reading notes for the map, moved out of the banner: they explain this
       # view's figures and nothing else.
       helpText(
-        "Each polygon is one graded neighborhood, shaded by modeled exposure on",
-        "a log scale, darker meaning higher. The scale is fitted to the selected",
-        "city, so it reads the spread within that city and colors are not",
-        "comparable between cities. Zones with no measurable exposure get their",
-        "own shade, because an absence is not a low value."
+        "Each polygon is shaded by modeled exposure on a log scale, darker",
+        "meaning higher. The scale is fitted to the selected city, so it reads",
+        "the spread within that city and colors are not comparable between",
+        "cities. Areas with no measurable exposure get their own shade, because",
+        "an absence is not a low value."
       ),
       helpText(
-        "Hover a zone for its grade, exposure, and demographics.",
-        "Use the layer control (top-right of the map) to switch between the",
-        "exposure and HOLC-grade fill views, and to turn the highway, rail, and",
-        "airport layers on and off. The layer matching the source you picked is",
-        "drawn by default and follows the selector.",
+        HTML("Three fill views in the layer control (top-right of the map), one",
+             "at a time. <b>HOLC (grade)</b> fills the graded neighborhoods by",
+             "grade. <b>HOLC (exposure)</b> fills those same neighborhoods by",
+             "exposure. <b>Tracts (exposure)</b> covers the whole city on the",
+             "same color scale, so you can see where the graded zones sit in",
+             "the city's own exposure surface rather than only how they compare",
+             "with each other.")
+      ),
+      helpText(
+        "Hover any polygon for its exposure and demographics.",
+        "The same control turns the highway, rail, and airport layers on and",
+        "off; the one matching the source you picked is drawn by default and",
+        "follows the selector.",
         "Switch the basemap to Satellite and turn the fill opacity down to see",
-        "the infrastructure on the ground beneath the zones."
+        "the infrastructure on the ground beneath."
       )
     ),
     conditionalPanel(
       condition = "input.view === 'national'",
+      # What this view is computed on. It was a card beside the D:A box, which
+      # put a static block of prose in the one place on the tab where the reader
+      # is looking for a number; the sidebar is where the view's own reading
+      # notes live, so it sits with them.
+      helpText(
+        HTML(sprintf(paste("<b>Basis:</b> every one of the %s HOLC-graded zones",
+                           "in the study, %d cities across %d states. These are",
+                           "the same zones the Map tab draws, so a figure here and a",
+                           "polygon there describe one population. The city",
+                           "selected above changes only the points overlaid on",
+                           "the chart."),
+                     format(nrow(frame), big.mark = ","), frame_cities,
+                     frame_states))
+      ),
       helpText(
         HTML("<b>Chart:</b> exposure across every graded zone in the study,",
              "with the selected city's zones overlaid. Use <b>Group by</b> to",
@@ -477,6 +596,10 @@ ui <- page_sidebar(
      .fine-src > li { margin-bottom: .15rem; }
      .fine-src b { font-weight: 600; opacity: .9; }
      .fine-src a { text-underline-offset: .15em; }
+     /* Carries no links, so it can sit at the .5 opacity the sourcing rows
+        cannot. */
+     .app-brand-source { font-size: .72rem; line-height: 1.4; opacity: .5;
+                         max-width: 95ch; margin: .5rem 0 0; }
      @media (max-width: 700px) {
        .app-brand-title { font-size: 1.5rem; }
        .navbar { padding: 1.1rem 0 .9rem; }
@@ -506,7 +629,6 @@ ui <- page_sidebar(
      .ct-chev { font-size: .58rem; transition: transform .18s ease;
                 display: inline-block; }
      .collapse-toggle[aria-expanded='false'] .ct-chev { transform: rotate(180deg); }
-     .stats-basis { font-size: .74rem; line-height: 1.45; opacity: .7; }
      .method { font-size: .72rem; line-height: 1.45; opacity: .72;
                padding: .1rem .2rem .3rem; }
      .method b { font-weight: 600; opacity: .9; }
@@ -529,18 +651,27 @@ ui <- page_sidebar(
      .grow-n { width: 3.4rem; flex: 0 0 auto; text-align: right;
                font-size: .95rem; font-weight: 700;
                font-variant-numeric: tabular-nums; }
-     /* D-vs-A bars: proportional, not to scale in real units. The underlying xp
-        medians span 0.47 to 2.6e5 across sector x pollutant in arbitrary model
-        units, so printing them would add a number the reader cannot interpret.
-        The bars carry the ratio as a picture; n is shown because grade A is the
-        small-N constraint everywhere in this project. */
-     .da { margin-top: .5rem; }
+     /* D-vs-A staircase: one row per grade, each bar a multiple of grade A's
+        median. Capped in width rather than run to the full card, because at
+        1400px the bars stop being a shape and become four long lines. The
+        length axis is fixed across every sector x pollutant (grade_idx_max), so
+        a flat selection draws short bars instead of being rescaled up to fill
+        the same track a steep one does. */
+     .da { margin-top: .5rem; max-width: 34rem; }
      .da-row { display: flex; align-items: center; gap: .45rem;
                margin-bottom: .3rem; }
      .da-lab { width: 1rem; flex: 0 0 auto; font-weight: 700; font-size: .8rem; }
      .da-track { flex: 1 1 auto; height: .7rem; border-radius: .35rem;
-                 background: rgba(0,0,0,.08); }
+                 background: rgba(0,0,0,.08); position: relative; }
      .da-fill { height: 100%; border-radius: .35rem; }
+     /* Parity tick at 1.0x, the grade-A baseline. Light rather than dark
+        because the box is the theme's primary blue. Grade A's own bar ends
+        exactly on it, which is what makes the tick self-explaining. */
+     .da-base { position: absolute; top: -.15rem; bottom: -.15rem; width: 1px;
+                background: rgba(255,255,255,.6); }
+     .da-idx { width: 2.9rem; flex: 0 0 auto; text-align: right;
+               font-size: .82rem; font-weight: 700;
+               font-variant-numeric: tabular-nums; }
      .da-n { width: 4.4rem; flex: 0 0 auto; text-align: right;
              font-size: .68rem; opacity: .7;
              font-variant-numeric: tabular-nums; }
@@ -613,10 +744,25 @@ ui <- page_sidebar(
      /* The empty .tabbable leaves the nav's line height behind once the list is
         gone; the panels start at the top of the content area instead. */
      .tabbable > .tab-content { margin-top: 0; }
-     .basis-card { padding: .7rem .85rem; }
-     .basis-h { font-size: .78rem; font-weight: 700; letter-spacing: .02em;
-                text-transform: uppercase; opacity: .55;
-                margin-bottom: .25rem; }
+     /* Exposure key: ramp plus the nested zero swatch, one box. The swatch sits
+        under a rule because it is a different kind of statement from the scale
+        above it -- an absence, not a value on it -- and the rule is what stops
+        it reading as the bottom step of the ramp. */
+     .lg-title { font-weight: 700; font-size: .78rem; line-height: 1.25;
+                 margin-bottom: .35rem; }
+     .lg-title small { font-weight: 400; opacity: .75; font-size: .68rem; }
+     .lg-ramp { display: flex; align-items: stretch; gap: .4rem; height: 5.5rem; }
+     .lg-bar { width: 1.1rem; flex: 0 0 auto; border-radius: 2px;
+               border: 1px solid rgba(0,0,0,.2); }
+     .lg-ticks { position: relative; flex: 1 1 auto; min-width: 2.2rem; }
+     .lg-tick { position: absolute; left: 0; transform: translateY(50%);
+                font-size: .68rem; line-height: 1;
+                font-variant-numeric: tabular-nums; }
+     .lg-zero { display: flex; align-items: center; gap: .4rem;
+                margin-top: .45rem; padding-top: .4rem;
+                border-top: 1px solid rgba(0,0,0,.15); font-size: .7rem; }
+     .lg-sw { width: 1.1rem; height: .8rem; flex: 0 0 auto; border-radius: 2px;
+              border: 1px solid rgba(0,0,0,.2); display: inline-block; }
      /* Per-city cards. One number each, sized between the grade-count numerals
         and a value_box headline, so the three stacked cards read as one family
         without any of them shouting. */
@@ -695,31 +841,27 @@ ui <- page_sidebar(
     ),
     nav_panel(
       title = "Data", value = "national",
+      # Full width, and alone: the basis card that used to sit beside this is in
+      # the Data sidebar now, where a reader is already looking when they ask
+      # what the tab is computed on. col_widths = 12 rather than dropping
+      # layout_columns, because fill = FALSE is what keeps the box sized to its
+      # contents instead of stretching to the panel.
       layout_columns(
-        fill = FALSE, col_widths = c(5, 7),
-        # The ratio alone was a bare "2.00x" with no sense of what was being
-        # divided by what, so the two grade medians are drawn as proportional
-        # bars beneath it. The bars are relative only -- see the .da CSS note on
-        # why the raw medians are not printed -- and each carries its n, because
-        # grade A is thin enough in most cities that the reader should see what
-        # the median rests on.
+        fill = FALSE, col_widths = 12,
+        # A D:A ratio on its own is an endpoint, and an endpoint is the wrong
+        # summary for two of the three sectors: aviation NO2 ends at 0.99x but
+        # peaks at grade B (1.09x), and road NO ends at 1.19x after peaking at C.
+        # So the box draws all four grades as a staircase indexed to grade A --
+        # the ratio stays as the headline, and the shape underneath says whether
+        # that ratio describes a gradient or just its two ends. Indexing also
+        # retires the old bars' worst property: they were proportional-only,
+        # because the raw xp medians span 0.97 to 2.4e5 in arbitrary model units
+        # and printing them adds a number nobody can interpret. A multiple of
+        # grade A is a unit that reads on its own. Each row keeps its n, because
+        # grade A is the small-N constraint everywhere in this project.
         value_box(title = "Redlined (D) vs. best-graded (A)",
                   value = textOutput("vb_ratio"),
-                  uiOutput("vb_ratio_detail"), theme = "primary"),
-        # Static, not an output: this states what the whole tab is computed on,
-        # and nothing in it moves with an input.
-        card(
-          class = "basis-card",
-          div(class = "basis-h", "What this view covers"),
-          div(class = "stats-basis",
-              sprintf(paste("Every one of the %s HOLC-graded zones in the",
-                            "study, %d cities across %d states. The Map",
-                            "tab draws a %s-zone subset chosen to keep the",
-                            "choropleth legible, which does not narrow anything",
-                            "here. The city selected in the sidebar changes only",
-                            "the points overlaid on the chart below."),
-                      format(nrow(frame), big.mark = ","), frame_cities,
-                      frame_states, format(nrow(zones), big.mark = ","))))
+                  uiOutput("vb_ratio_detail"), theme = "primary")
       ),
       card(
         # No fixed height: the method block sits under the plot and its length
@@ -756,8 +898,8 @@ server <- function(input, output, session) {
   # All three sectors at the selected pollutant, on the FULL 8,920-zone frame.
   # The equity chart compares sectors side by side, so it cannot read exp_sel(),
   # which is narrowed to the one sector the map is drawing; and it reads the
-  # frame rather than `exp`, because min_zones is a map-legibility filter with
-  # no bearing on which zones the statistics should describe.
+  # frame rather than `exp` because the frame is the geometry-free table, which
+  # is all a plot needs.
   exp_poll <- reactive({
     exp_frame[exp_frame$pollutant == input$poll, c("HOLCID", "sector", "xp")]
   })
@@ -776,8 +918,16 @@ server <- function(input, output, session) {
   # colors are NOT comparable between cities -- the legend and the sidebar say
   # so, and the equity chart below is where cross-city context lives. Dropping
   # zeros keeps the mass of no-exposure zones from compressing the ramp.
+  #
+  # ONE domain across both exposure layers, pooling the zone and tract values.
+  # comb.R builds a zone's xp as the area-weighted mean of the tracts
+  # intersecting it, so the two are the same quantity at two resolutions and a
+  # shared ramp is honest. It is also the whole point of the tract layer: a
+  # reader switching between them is asking where the graded zones sit in the
+  # city's surface, and two independently-fitted ramps would answer a different
+  # question in each layer while looking like they answered one.
   nz_vals <- reactive({
-    v <- city_zones()$logxp
+    v <- c(city_zones()$logxp, city_tracts()$logxp)
     v[!is.na(v) & v > 0]
   })
 
@@ -805,6 +955,24 @@ server <- function(input, output, session) {
     unname(out)
   }
 
+  # Tract exposure slice for the current sector x pollutant.
+  exp_tract_sel <- reactive({
+    exp_tract[exp_tract$sector == input$sector &
+              exp_tract$pollutant == input$poll, c("GEOID", "xp", "logxp")]
+  })
+
+  # The selected city's tracts, joined to exposure. Membership comes from the
+  # side table rather than a `place` column on the geometry, because a tract can
+  # serve more than one city box and is carried only once.
+  city_tracts <- reactive({
+    req(input$city)
+    ids <- tract_city$GEOID[tract_city$place == input$city]
+    t <- tracts[tracts$GEOID %in% ids, ]
+    if (any(st_geometry_type(t) == "GEOMETRYCOLLECTION"))
+      t <- st_collection_extract(t, "POLYGON")
+    left_join(t, exp_tract_sel(), by = "GEOID")
+  })
+
   # selected city's zones joined to exposure
   city_zones <- reactive({
     req(input$city)
@@ -822,20 +990,25 @@ server <- function(input, output, session) {
     sprintf("%s: %s %s exposure by HOLC zone",
             input$city, sector_label(), poll_label())
   })
-  # An all-grey map is a correct answer, not a broken one, but it does not look
-  # like one. At min_zones = 100 no city in the bundle is all-grey for any
-  # sector x pollutant (it was 33 of 155 cities for aviation noise at a cutoff
-  # of 20), so this branch is currently unreachable -- keep it, because the
-  # cutoff is a display choice that may be lowered again, and individual zones
-  # still go grey constantly (54-78% of zones for aviation).
-  # Say so in the header rather than leaving the reader to guess.
+  # An all-grey zone layer is a correct answer, not a broken one, but it does
+  # not look like one. With every city back in the selector this is common
+  # again, not the unreachable branch it was at a 100-zone cutoff: aviation is
+  # absent from most small cities entirely. Say so in the header.
+  #
+  # It reports the ZONE layer specifically, and now says so, because the tract
+  # layer can be populated in the same city and view -- a city whose graded
+  # zones all read zero may still have exposure a few tracts over, which is
+  # exactly the thing the tract layer was added to show.
   output$map_note <- renderUI({
     z <- city_zones()
     if (any(!is.na(z$xp) & z$xp > 0)) return(NULL)
+    tr <- city_tracts()
+    also <- any(!is.na(tr$xp) & tr$xp > 0)
     tags$span(
       style = "color:#996600; font-weight:400;",
-      sprintf(" — no zone here has measurable %s %s exposure",
-              sector_label(), poll_label())
+      sprintf(". No graded zone here has measurable %s %s exposure%s",
+              sector_label(), poll_label(),
+              if (also) "; the tract layer does" else "")
     )
   })
 
@@ -855,48 +1028,74 @@ server <- function(input, output, session) {
   # as though it were intensity alone (rail noise: 19.3x pooled vs 3.1x here).
   # Both the headline ratio and the bars under it read from one place, so the
   # picture can never disagree with the number above it.
+  # All four grades, not just the two the headline divides: the staircase under
+  # the ratio is what distinguishes a gradient from a pair of endpoints that
+  # happen to differ. Indexed to grade A, so the medians leave their arbitrary
+  # model units behind and become multiples of the best-graded baseline.
   da_stats <- reactive({
-    e <- merge(exp_sel_frame(), frame[, c("HOLCID", "grade")], by = "HOLCID")
-    e <- e[!is.na(e$xp) & e$xp > 0, ]
-    list(mA = median(e$xp[e$grade == "A"], na.rm = TRUE),
-         mD = median(e$xp[e$grade == "D"], na.rm = TRUE),
-         nA = sum(e$grade == "A"), nD = sum(e$grade == "D"))
+    e   <- merge(exp_sel_frame(), frame[, c("HOLCID", "grade")], by = "HOLCID")
+    e   <- e[!is.na(e$xp) & e$xp > 0, ]
+    med <- sapply(grade_levels,
+                  function(g) median(e$xp[e$grade == g], na.rm = TRUE))
+    n   <- sapply(grade_levels, function(g) sum(e$grade == g))
+    # A zero or missing grade-A median makes every index undefined rather than
+    # infinite-looking, which the outputs below check for once.
+    idx <- if (is.finite(med[["A"]]) && med[["A"]] > 0)
+             med / med[["A"]] else setNames(rep(NA_real_, 4), grade_levels)
+    list(med = med, n = n, idx = idx)
   })
 
   output$vb_ratio <- renderText({
     s <- da_stats()
-    if (is.na(s$mA) || is.na(s$mD) || s$mA == 0) "n/a"
-    else sprintf("%.1f×", s$mD / s$mA)
+    if (!is.finite(s$idx[["D"]])) "n/a" else sprintf("%.1f×", s$idx[["D"]])
   })
 
-  # Bar widths are each median as a share of the larger of the two, so the pair
-  # is a picture of the ratio itself. The basis line stays even though this box
-  # now sits in a view that states its own basis: the project keeps two number
-  # bases that differ materially (rail noise D:A is 2.96x here against 2.0x on
-  # the mapped bundle), so any figure quoted out of the app still has to say
-  # which one it came from.
+  # Bar length is the grade's index on the fixed grade_idx_max axis, so lengths
+  # mean the same thing across every sector x pollutant the selectors can reach.
+  # The basis line stays even though this box now sits in a view whose sidebar
+  # states the basis: the project keeps two number bases that differ materially
+  # (rail noise D:A is 2.96x here against 2.0x on the mapped bundle), so any
+  # figure quoted out of the app still has to say which one it came from. And
+  # where the peak is not grade D the note says so -- the headline ratio is an
+  # endpoint, and for aviation and road the endpoint is not the maximum.
   output$vb_ratio_detail <- renderUI({
     s <- da_stats()
-    if (is.na(s$mA) || is.na(s$mD) || s$mA == 0)
+    if (!is.finite(s$idx[["A"]]) || !is.finite(s$idx[["D"]]))
       return(div(class = "vb-note",
                  "No zones with measurable exposure in one of the two grades."))
-    mx  <- max(s$mA, s$mD)
-    bar <- function(g, m, n) div(
-      class = "da-row",
-      span(class = "da-lab", g),
-      div(class = "da-track",
-          div(class = "da-fill",
-              style = sprintf("width:%.1f%%; background:%s;",
-                              100 * m / mx, grade_cols[[g]]))),
-      span(class = "da-n", sprintf("n=%s", format(n, big.mark = ","))))
+    bar <- function(g) {
+      v <- s$idx[[g]]
+      div(class = "da-row",
+          span(class = "da-lab", g),
+          div(class = "da-track",
+              div(class = "da-base",
+                  style = sprintf("left:%.1f%%;", 100 / grade_idx_max)),
+              div(class = "da-fill",
+                  style = sprintf("width:%.1f%%; background:%s;",
+                                  if (is.finite(v))
+                                    100 * min(v / grade_idx_max, 1) else 0,
+                                  grade_cols[[g]]))),
+          span(class = "da-idx",
+               if (is.finite(v)) sprintf("%.1f×", v) else "n/a"),
+          span(class = "da-n", sprintf("n=%s", format(s$n[[g]],
+                                                      big.mark = ","))))
+    }
+    # Flagged only when the peak clears grade D by a margin the bars actually
+    # show. Road NO peaks at C by 1.20 against 1.19, and calling that out as
+    # "highest at grade C, not D" reports a rounding difference as a shape.
+    idx  <- ifelse(is.finite(s$idx), s$idx, -Inf)
+    peak <- grade_levels[which.max(idx)]
+    if (max(idx) < s$idx[["D"]] * 1.05) peak <- "D"
     tagList(
-      div(class = "da", bar("A", s$mA, s$nA), bar("D", s$mD, s$nD)),
+      div(class = "da", lapply(grade_levels, bar)),
       div(class = "vb-note",
-          sprintf(paste("Median %s %s exposure, grade D against grade A.",
-                        "Zones with measurable exposure only; zeros excluded.",
-                        "All %s graded zones in %d cities."),
+          sprintf(paste("Median %s %s exposure by grade, each as a multiple of",
+                        "grade A. Zones with measurable exposure only; zeros",
+                        "excluded. All %s graded zones in %d cities.%s"),
                   sector_label(), poll_label(),
-                  format(nrow(frame), big.mark = ","), frame_cities)))
+                  format(nrow(frame), big.mark = ","), frame_cities,
+                  if (identical(peak, "D")) ""
+                  else sprintf(" Highest at grade %s, not D.", peak))))
   })
 
   # Grade composition of the mapped city. A city with 12 grade-A zones and 300
@@ -935,9 +1134,10 @@ server <- function(input, output, session) {
 
   # Presence in the mapped city. The choropleth already shows the grey zones;
   # this puts a number on them, and it is the figure in this row that moves with
-  # both the source and the type selector. Bundle basis, which for these cities
-  # is all of their graded zones -- min_zones drops whole cities, never zones
-  # inside a city it keeps -- so this is the city's real share, not a subset's.
+  # both the source and the type selector. Every graded zone in the city, so it
+  # is the city's real share rather than a subset's. It counts zones, not
+  # tracts: the tract layer has its own zero pattern, and folding the two into
+  # one percentage would describe neither.
   output$vb_city_presence <- renderUI({
     z <- st_drop_geometry(city_zones())
     v <- z$xp[!is.na(z$xp)]
@@ -1017,21 +1217,29 @@ server <- function(input, output, session) {
       # drive leaflet's group-linked legends), so show only the active layer's
       # legend manually; the MutationObserver re-applies when the proxy re-adds
       # the legends after an input change.
-      htmlwidgets::onRender("
+      # Two of the three base layers are exposure fills sharing one ramp and one
+      # legend, so the test is "is this the grade layer" rather than a match on
+      # the exposure layer's own name -- adding a second exposure layer must not
+      # mean a second thing to keep in sync here.
+      # The grade layer's name is injected from fill_groups rather than written
+      # here, so the labels can be reworded in one place without the legend
+      # silently sticking on whichever key was showing.
+      htmlwidgets::onRender(sprintf("
         function(el) {
           var map = this;
+          var GRADE = '%s';
           function apply(name) {
-            var exp = (name === 'Exposure');
+            var exp = (name !== GRADE);
             el.querySelectorAll('.legend-exposure').forEach(function(e){ e.style.display = exp ? '' : 'none'; });
             el.querySelectorAll('.legend-grade').forEach(function(e){ e.style.display = exp ? 'none' : ''; });
           }
           map.on('baselayerchange', function(e){ apply(e.name); });
           new MutationObserver(function(){
             var c = el.querySelector('.leaflet-control-layers-base input:checked');
-            apply(c ? c.parentNode.textContent.trim() : 'Exposure');
+            apply(c ? c.parentNode.textContent.trim() : '%s');
           }).observe(el, { childList: true, subtree: true });
         }
-      ")
+      ", fill_groups[["grade"]], fill_groups[["zone_exp"]]))
   })
 
   # Basemap swap lives in its own observer so tile handling stays separable from
@@ -1080,15 +1288,35 @@ server <- function(input, output, session) {
     bw   <- if (sat) 0.8 else 0.4
     hcol <- if (sat) "#ffff00" else "#333333"
 
+    # Tracts carry the same modeled quantity, so they are colored by the same
+    # per-city ramp. Borders are lighter and thinner than the zones': this layer
+    # is the city's surface, and there are roughly twice as many of them, so
+    # zone-weight hairlines turn a large city into a mesh.
+    tr <- city_tracts()
+    tr$exp_col <- fill_exposure(tr, p)
+    tr_xp_txt <- ifelse(is.na(tr$xp), "n/a",
+                        ifelse(tr$xp == 0, "none measured", sprintf("%.3f", tr$xp)))
+    # pop_total here is the tract's own ACS count, not the zone layer's
+    # density x area estimate -- at tract level the headcount is the source
+    # figure, so it is reported without the "est." hedge the zones need.
+    tr_labs <- sprintf(
+      paste0("<b>Census tract %s</b><br/>Estimated exposure: <b>%s</b><br/>",
+             "Median income: <b>%s</b> &middot; Population: <b>%s</b>"),
+      tr$GEOID, tr_xp_txt,
+      dollar(tr$inc, accuracy = 1),
+      comma(tr$pop_total, accuracy = 1)
+    ) |> lapply(htmltools::HTML)
+
     bb <- as.numeric(st_bbox(z))
-    # clearGroup on the two fill groups, not clearShapes: the infrastructure
+    # clearGroup on the three fill groups, not clearShapes: the infrastructure
     # lines are shapes too, and clearing them here would wipe an overlay the
     # reader turned on every time they nudged the opacity slider.
     prox <- leafletProxy("map", data = z) |>
-      clearGroup("Exposure") |> clearGroup("HOLC grade") |> clearControls() |>
+      clearGroup(fill_groups[["zone_exp"]]) |> clearGroup(fill_groups[["grade"]]) |>
+      clearGroup(fill_groups[["tract_exp"]]) |> clearControls() |>
       # Exposure layer -- fill choropleth (thin neutral border)
       addPolygons(
-        group = "Exposure",
+        group = fill_groups[["zone_exp"]],
         fillColor = ~exp_col, fillOpacity = input$fillop,
         color = bcol, weight = bw, opacity = 0.8,
         highlightOptions = highlightOptions(weight = 3, color = hcol,
@@ -1098,35 +1326,56 @@ server <- function(input, output, session) {
       # HOLC grade layer -- grade-colored fill choropleth (thin neutral border
       # so adjacent same-grade zones stay separable)
       addPolygons(
-        group = "HOLC grade",
+        group = fill_groups[["grade"]],
         fillColor = ~grade_col, fillOpacity = input$fillop,
         color = bcol2, weight = bw, opacity = 0.8,
         highlightOptions = highlightOptions(weight = 3, color = hcol,
                                             bringToFront = TRUE),
         label = labs
       ) |>
-      # mutually exclusive views -- two fill choropleths can't co-read when
-      # stacked, so switch between them (default: Exposure)
+      # Tract exposure -- the same ramp over the whole city view, so the graded
+      # zones can be read against the surface they sit in rather than only
+      # against each other.
+      addPolygons(
+        data = tr, group = fill_groups[["tract_exp"]],
+        fillColor = tr$exp_col, fillOpacity = input$fillop,
+        color = bcol, weight = bw * 0.6, opacity = 0.6,
+        highlightOptions = highlightOptions(weight = 3, color = hcol,
+                                            bringToFront = TRUE),
+        label = tr_labs
+      ) |>
+      # mutually exclusive views -- fill choropleths can't co-read when stacked,
+      # so switch between them. Listed unit-first so the two HOLC fills sit
+      # together and the eye reads the unit before the variable; the default is
+      # still the HOLC exposure fill, set by hiding the other two rather than by
+      # list position.
       addLayersControl(
-        baseGroups = c("Exposure", "HOLC grade"),
+        baseGroups = unname(fill_groups[c("grade", "zone_exp", "tract_exp")]),
         overlayGroups = unname(infra_groups),
         options = layersControlOptions(collapsed = FALSE)
       ) |>
-      hideGroup("HOLC grade")
+      hideGroup(fill_groups[["grade"]]) |> hideGroup(fill_groups[["tract_exp"]])
 
-    # exposure legends: the ramp (nonzero only), then the zero swatch. Both are
-    # classed legend-exposure so the baselayerchange handler toggles them together.
-    if (!is.null(p))
+    # ONE exposure key: the ramp with the zero swatch nested beneath it, inside
+    # the same box. A zero belongs to the same reading -- it is the absence the
+    # ramp deliberately refuses to color -- so shipping it as a second box made
+    # the reader assemble one scale out of two keys.
+    #
+    # Hand-rolled through addControl rather than addLegend, because addLegend
+    # renders a continuous ramp OR a discrete swatch list and has no slot for
+    # trailing content under the ramp. Building the markup here is what puts the
+    # two in one box without depending on leaflet's internal legend structure.
+    # It serves the zone and tract fills alike: one ramp, one key, which is what
+    # makes the two layers comparable.
+    has_zero <- any(!is.na(z$xp) & z$xp == 0) || any(!is.na(tr$xp) & tr$xp == 0)
+    # No ramp and no zeros means the view carries no exposure information at
+    # all, so there is nothing for a key to say; drawing an empty titled box
+    # would only assert otherwise.
+    if (!is.null(p) || has_zero)
       prox <- prox |>
-        addLegend("bottomright", pal = p, values = nz_vals(),
-                  title = paste0("Exposure<br/><small>log(xp+1), scaled ",
-                                 "within city</small>"), opacity = 0.9,
-                  className = "info legend legend-exposure")
-    if (any(!is.na(z$xp) & z$xp == 0))
-      prox <- prox |>
-        addLegend("bottomright", colors = zero_col,
-                  labels = "No measurable exposure", opacity = 0.9,
-                  className = "info legend legend-exposure")
+        addControl(exposure_key(p, nz_vals(), has_zero),
+                   position = "bottomright",
+                   className = "info legend legend-exposure")
 
     prox <- prox |>
       addLegend("bottomright", colors = unname(grade_cols),
