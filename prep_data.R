@@ -22,6 +22,13 @@
 #   rank   - sector first-place ranking summary (the anchor finding), re-tallied
 #            with the CEI comparison dropped
 #   rank_cmp - how many pollutant x measure comparisons that tally covers
+#   frame  - ALL 8,920 graded zones, no geometry: HOLCID, place, grade + the
+#            three variables the equity chart groups by. The statistics run on
+#            this; the map runs on `zones`, which the thin-city filter narrows
+#            to 14 cities. Two populations, deliberately.
+#   exp_frame - HOLCID x sector x pollutant -> xp for all 8,920 zones
+#   infra  - list(road, rail, avi): NTAD transportation infrastructure clipped
+#            to each mapped city, for the map's overlay layers
 #
 # Hard constraints baked in here (see interactive_display_plan_2026-07-14.md):
 #   * No CEI in any form (structurally broken combined index).
@@ -46,10 +53,16 @@ sf_use_s2(FALSE)  # crosswalk polygons trip s2 on a few degenerate edges
 
 app_dir <- "C:/Users/andre/Desktop/box/projects/life/job-search/portfolio-shiny-redenv"
 d_out   <- "D:/research/redenv/data/output"
+d_ntad  <- "D:/research/redenv/data/ntnm"   # NTAD infrastructure geojsons
 
 keep_sectors    <- c("Rail", "Road", "Aviation")
 drop_pollutants <- c("CEI")
 min_zones       <- 100  # drop thin-coverage cities (< min_zones graded zones)
+
+# infrastructure overlay (section 5)
+road_fclass <- c(1, 2)  # HPMS functional class: 1 interstate, 2 other freeway
+infra_pad   <- 0.12     # city bbox padding (fraction of extent) for the clip
+infra_tol   <- 30       # line simplification tolerance, metres (EPSG:5070)
 
 # 1. exposure + demographics from xp_out.csv --------------------------------
 xp <- fread(file.path(d_out, "xp_out.csv"))
@@ -97,6 +110,24 @@ zone_counts <- zones |> st_drop_geometry() |> count(place, name = "n_zones")
 keep_places <- zone_counts$place[zone_counts$n_zones >= min_zones]
 n_dropped_cities <- nrow(zone_counts) - length(keep_places)
 n_dropped_zones  <- sum(zone_counts$n_zones[zone_counts$n_zones < min_zones])
+
+# 2b. the full study frame, captured BEFORE the thin-city filter -------------
+# The map and the statistics answer to different populations and now say so.
+# min_zones exists to keep the choropleth legible, which is a display concern
+# and no reason to narrow the statistics: the frame is every graded zone the
+# study analyses, and the survivors of the filter are all large cities, so the
+# two bases differ materially (rail noise D:A is 3.0x on the frame and 2.0x on
+# the 14-city bundle). Geometry is dropped here -- the frame drives plots only,
+# never the map, so 8,920 polygons would be dead weight in the bundle.
+frame <- zones |>
+  st_drop_geometry() |>
+  select(HOLCID, place, grade, inc, pct_hisp, pct_blk)
+# logxp is the map's coloring scale and the map never draws frame zones, so
+# only xp is carried; dropping it keeps this table roughly a third smaller.
+exp_frame <- exp[, .(HOLCID, sector, pollutant, xp)]
+cat(sprintf("study frame: %d zones / %d cities, %d exposure rows\n",
+            nrow(frame), length(unique(frame$place)), nrow(exp_frame)))
+
 zones <- zones |> filter(place %in% keep_places)
 exp   <- exp[HOLCID %in% zones$HOLCID]
 cat(sprintf("thin-city filter (< %d zones): dropped %d cities / %d zones -> %d zones kept\n",
@@ -135,9 +166,131 @@ cat(sprintf("sector ranking: %d comparisons (CEI dropped), %d first places\n",
             n_cmp, sum(rank$n_first_place)))
 print(as.data.frame(rank))
 
-# 5. save bundle ------------------------------------------------------------
+# 5. infrastructure overlay geometry ----------------------------------------
+# The map answers "which zones are exposed"; the overlay answers "to what". The
+# three NTAD layers on D:/ are national and far too large to ship (571/361/40
+# MB), so each is filtered at the OGR level to the bundle's states, clipped to
+# the mapped cities' padded bounding boxes, and simplified.
+#
+# ROADS are limited-access highways only -- HPMS functional class 1 (interstate)
+# and 2 (other freeway/expressway). Class 3 (other principal arterial) is 137k
+# segments across these states and blankets a city map so thoroughly that it
+# stops explaining anything; classes 1-2 are also the roads that dominate the
+# sector's emissions and noise, and urban interstates are the concrete case in
+# the redlining-and-infrastructure literature. Attribute filtering happens in
+# the OGR query so the full file is never materialised in R.
+#
+# RAIL is kept whole (no class filter): yard and spur track is exactly what
+# generates rail exposure, so thinning to mainlines would misrepresent it.
+#
+# AIRPORTS are public-use, operational airports (SITE_TYPE_CODE "A"), which
+# drops heliports, seaplane bases and private strips. This is a proximity cue,
+# not the aviation emissions inventory -- the exposure surface is modeled from
+# operations, so a small GA field on the map carries far less exposure than a
+# hub. The towered flag sizes the marker to keep that visible.
+#
+# The clip box is the city's zone bbox padded by infra_pad, which is what the
+# map's fitBounds shows, so lines run to the edge of the default view. Zoom out
+# far enough and they stop; that is a bundle-size tradeoff, stated in the app.
+cat("-- infrastructure overlay --\n")
+bundle_states <- sort(unique(zones$state))
+places        <- sort(unique(zones$place))
+
+city_box <- function(pl, pad = infra_pad) {
+  bb <- st_bbox(zones[zones$place == pl, ])
+  dx <- (bb[["xmax"]] - bb[["xmin"]]) * pad
+  dy <- (bb[["ymax"]] - bb[["ymin"]]) * pad
+  st_as_sfc(st_bbox(c(xmin = bb[["xmin"]] - dx, xmax = bb[["xmax"]] + dx,
+                      ymin = bb[["ymin"]] - dy, ymax = bb[["ymax"]] + dy),
+                    crs = 4326))
+}
+boxes <- setNames(lapply(places, city_box), places)
+
+# clip one national layer to every city, tagging rows with the city they serve.
+# A feature spanning two mapped cities is emitted once per city, which is what
+# a per-city lookup needs.
+clip_to_cities <- function(x, simplify = TRUE) {
+  parts <- lapply(places, function(pl) {
+    # st_crop clips in lon/lat and says so on every call; the boxes are city-
+    # sized, where the planar assumption costs nothing
+    y <- suppressMessages(suppressWarnings(st_crop(x, boxes[[pl]])))
+    if (!nrow(y)) return(NULL)
+    if (simplify) {
+      y <- y |> st_transform(5070) |> st_simplify(dTolerance = infra_tol) |>
+        st_transform(4326)
+      y <- y[!st_is_empty(y), ]
+      if (!nrow(y)) return(NULL)
+    }
+    y$place <- pl
+    y
+  })
+  do.call(rbind, Filter(Negate(is.null), parts))
+}
+
+quote_in <- function(v) paste0("'", v, "'", collapse = ",")
+# The road layer keys on numeric state FIPS (rail and aviation carry the
+# postal abbreviation), so the bundle's states are translated here rather than
+# pulled from tigris -- a literal lookup keeps prep_data.R free of a Census
+# dependency it needs for nothing else.
+fips_lookup <- c(
+  AL = 1, AK = 2, AZ = 4, AR = 5, CA = 6, CO = 8, CT = 9, DE = 10, DC = 11,
+  FL = 12, GA = 13, HI = 15, ID = 16, IL = 17, IN = 18, IA = 19, KS = 20,
+  KY = 21, LA = 22, ME = 23, MD = 24, MA = 25, MI = 26, MN = 27, MS = 28,
+  MO = 29, MT = 30, NE = 31, NV = 32, NH = 33, NJ = 34, NM = 35, NY = 36,
+  NC = 37, ND = 38, OH = 39, OK = 40, OR = 41, PA = 42, RI = 44, SC = 45,
+  SD = 46, TN = 47, TX = 48, UT = 49, VT = 50, VA = 51, WA = 53, WV = 54,
+  WI = 55, WY = 56)
+state_fips <- unname(fips_lookup[bundle_states])
+stopifnot(!anyNA(state_fips))
+
+# -- roads: interstates + other freeways/expressways --
+road <- st_read(
+  file.path(d_ntad, "NTAD_road.geojson"), quiet = TRUE,
+  query = sprintf(paste("SELECT SIGNT1, SIGNN1, LNAME, FCLASS, AADT",
+                        "FROM \"NTAD_road\" WHERE STFIPS IN (%s) AND FCLASS IN (%s)"),
+                  paste(state_fips, collapse = ","),
+                  paste(road_fclass, collapse = ",")))
+# route shield where the segment carries one ("I-90"), street name otherwise
+route <- with(road, ifelse(SIGNT1 == "I" & nzchar(SIGNN1), paste0("I-", SIGNN1),
+                    ifelse(SIGNT1 == "U" & nzchar(SIGNN1), paste0("US-", SIGNN1),
+                    ifelse(SIGNT1 == "S" & nzchar(SIGNN1), paste0("SR-", SIGNN1),
+                           NA_character_))))
+road$name  <- ifelse(is.na(route), trimws(road$LNAME), route)
+road$aadt  <- road$AADT
+road$fclass <- road$FCLASS
+road <- clip_to_cities(road[, c("name", "aadt", "fclass")])
+cat(sprintf("roads: %d segments across %d cities\n", nrow(road),
+            length(unique(road$place))))
+
+# -- rail: all track in the bundle's states --
+rail <- st_read(
+  file.path(d_ntad, "NTAD_rail.geojson"), quiet = TRUE,
+  query = sprintf("SELECT RROWNER1 FROM \"NTAD_rail\" WHERE STATEAB IN (%s)",
+                  quote_in(bundle_states)))
+rail$owner <- rail$RROWNER1
+rail <- clip_to_cities(rail[, "owner"])
+cat(sprintf("rail: %d segments across %d cities\n", nrow(rail),
+            length(unique(rail$place))))
+
+# -- airports: public-use, operational, fixed-wing --
+avi <- st_read(
+  file.path(d_ntad, "NTAD_aviation.geojson"), quiet = TRUE,
+  query = paste("SELECT ARPT_NAME, ARPT_ID, TWR_TYPE_CODE FROM \"NTAD_aviation\"",
+                "WHERE SITE_TYPE_CODE = 'A' AND FACILITY_USE_CODE = 'PU'",
+                "AND ARPT_STATUS = 'O'"))
+avi$name    <- tools::toTitleCase(tolower(avi$ARPT_NAME))
+avi$id      <- avi$ARPT_ID
+avi$towered <- avi$TWR_TYPE_CODE != "NON-ATCT"
+avi <- clip_to_cities(avi[, c("name", "id", "towered")], simplify = FALSE)
+cat(sprintf("airports: %d (%d towered) across %d cities\n", nrow(avi),
+            sum(avi$towered), length(unique(avi$place))))
+
+infra <- list(road = road, rail = rail, avi = avi)
+
+# 6. save bundle ------------------------------------------------------------
 saveRDS(list(zones = zones, exp = exp, cities = cities, rank = rank,
-             rank_cmp = n_cmp),
+             rank_cmp = n_cmp, frame = frame, exp_frame = exp_frame,
+             infra = infra),
         file.path(app_dir, "redenv_data.rds"))
 sz <- file.info(file.path(app_dir, "redenv_data.rds"))$size
 cat(sprintf("wrote redenv_data.rds (%.2f MB)\n", sz / 1024^2))

@@ -12,6 +12,14 @@
 #                   spread and colors do not compare across cities. Zones with
 #                   no measurable exposure get their own color, not the bottom
 #                   of the ramp.
+#   * Overlay    -> the infrastructure itself: interstates and freeways, rail
+#                   track, airports. The choropleth says which zones are
+#                   exposed; the overlay says to what. The layer matching the
+#                   selected source is drawn by default, the other two are in
+#                   the layer control. Proximity is not the exposure model --
+#                   these are the same NTAD networks the emissions and noise
+#                   surfaces were built from, shown as a locator, not as a
+#                   second estimate of exposure.
 #   * Equity     -> national distribution across HOLC grades A-D (or a
 #                   demographic quintile) for that sector x pollutant, with the
 #                   selected city overlaid. Reports presence and intensity
@@ -57,6 +65,19 @@ exp    <- as.data.frame(d$exp)
 cities <- d$cities
 rank   <- d$rank
 rank_cmp <- d$rank_cmp   # pollutant x measure comparisons behind the tally
+infra  <- d$infra        # road / rail / avi geometry, clipped per city
+
+# The map and the statistics answer to different populations. `zones` is the
+# 14-city display bundle the thin-city filter leaves behind; `frame` is all
+# 8,920 graded zones the study analyses. Every plot and stat below reads the
+# frame -- min_zones exists to keep the choropleth legible and is no reason to
+# narrow the numbers. The gap is material, not cosmetic (rail noise D:A is
+# 2.96x on the frame against 2.0x on the bundle), so anything quoting either
+# must say which, and the stats panel states its basis on screen.
+frame     <- as.data.frame(d$frame)
+exp_frame <- as.data.frame(d$exp_frame)
+frame_cities <- length(unique(frame$place))
+frame_states <- length(unique(sub(".*, ", "", frame$place)))
 
 # Estimated zone population. The pipeline's pop_total is an area-weighted MEAN
 # of the intersecting tracts' totals (comb.R multiplies every numeric column by
@@ -130,9 +151,51 @@ tiles_for <- function(map, which) {
     map |> addProviderTiles(providers$CartoDB.Positron, group = "basemap")
 }
 
+# Infrastructure overlay. One group per sector, named for what is drawn rather
+# than for the sector, because that is what the reader sees on the map. The
+# group shown by default follows the Emission Source selector: picking Rail and
+# seeing rail track is the whole point of the layer, and stacking all three at
+# once over a choropleth is unreadable.
+infra_groups <- c(Road = "Highways", Rail = "Rail lines", Aviation = "Airports")
+
+# Colors sit off both the exposure ramp (YlOrRd) and the HOLC grade palette
+# (green/blue/yellow/red) so a line is never mistaken for a fill: near-black for
+# road, violet for rail, cyan for airports (the last two matching the project's
+# static city figures in scripts/analyze/maps.R).
+#
+# Every line is drawn twice, a wider halo beneath a thinner stroke. A single
+# dark line disappears into satellite imagery and a single light one disappears
+# into the near-white basemap; the halo makes one style legible on both, which
+# matters because the basemap is a control the reader is invited to flip.
+infra_style <- list(
+  light = list(road = c(main = "#1a1a1a", halo = "#ffffff"),
+               rail = c(main = "#6a3d9a", halo = "#ffffff")),
+  sat   = list(road = c(main = "#ffffff", halo = "#000000"),
+               rail = c(main = "#d0a3ff", halo = "#000000"))
+)
+avi_col <- "#00e5ff"
+
 # city selector choices: "Birmingham, AL" -> "Birmingham, AL". The map is
 # always a single city; there is no all-cities view.
 city_choices <- setNames(cities$place, cities$place)
+
+# 78 -> "78th", for the city's percentile in the national spread. The 11-13
+# exception is why this is not a switch on the last digit alone.
+ordinal <- function(p) {
+  n   <- round(p)
+  sfx <- if (n %% 100 %in% 11:13) "th"
+         else switch(as.character(n %% 10),
+                     "1" = "st", "2" = "nd", "3" = "rd", "th")
+  paste0(n, sfx)
+}
+
+# An external link as a string, for lines that continue past it. A tag list puts
+# every child on its own line and the newline renders as a space, so an a() with
+# ", publisher." as a sibling child shows a floating space before the comma; the
+# whole line has to be one HTML string for the punctuation to sit tight.
+ext_link <- function(href, label) {
+  sprintf("<a href='%s' target='_blank' rel='noopener'>%s</a>", href, label)
+}
 
 # Anchor finding: how often each sector ranks first for steepness of gradient,
 # across the pollutant x disparity-measure comparisons in
@@ -155,26 +218,124 @@ ui <- page_sidebar(
   # hardcoded number.
   title = div(
     class = "app-brand",
-    div(class = "app-brand-title", "Redlining & Transportation Exposure"),
-    div(class = "app-brand-sub",
-        sprintf(paste("Rail, road, and aviation exposure across 1930s",
-                      "HOLC-graded neighborhoods in %d cities"),
-                nrow(cities))),
-    p(class = "app-brand-lede",
-      "In the 1930s the Home Owners' Loan Corporation graded American",
-      "neighborhoods A through D for mortgage risk, a ranking that tracked",
-      "race and shaped where investment went for decades afterward. This map",
-      "asks how present-day transportation emissions exposure sits on top of",
-      "those grades."),
-    p(class = "app-brand-lede",
-      "Each polygon is one graded neighborhood, shaded by modeled rail, road,",
-      "or aviation exposure on a log scale, darker meaning higher. The scale",
-      "is fitted to the selected city, so it reads the spread within that city",
-      "and colors are not comparable between cities. Zones with no measurable",
-      "exposure get their own shade, because an absence is not a low value.",
-      "The chart below the map pools every mapped city and regroups the same",
-      "zones by HOLC grade or by present-day demographics. Descriptive, not",
-      "causal.")
+    # Title and scope line stay put; only the explanatory paragraphs collapse,
+    # so a minimized banner still says what the app is. Bootstrap 5's collapse
+    # is used directly rather than an accordion: bslib ships the JS already, and
+    # an accordion would impose its own frame and border on a navbar block.
+    div(class = "brand-head",
+        # Names the two subjects with no verb between them, which is what lets
+        # the title pair them without claiming a mechanism; the descriptive-only
+        # hedge stays in the method block. "Emissions" covers noise because that
+        # is the app's own vocabulary: the selectors are Emission Source and
+        # Emission Type, and noise is one of the types.
+        div(class = "app-brand-title",
+            "Redlining & Disparities in Transportation Emissions Exposure"),
+        # Right-aligned controls: the view switch, then About. The switch is not
+        # authored here -- #brand-views is an empty slot, and the script further
+        # down moves navset_underline's own nav list into it once Shiny has
+        # bound it. Relocating the real element keeps the tab markup, the
+        # shown.bs.tab resize fix, and the conditionalPanels reading input.view
+        # all working untouched.
+        div(class = "brand-actions",
+            div(id = "brand-views"),
+            tags$button(
+              class = "btn btn-sm collapse-toggle", type = "button",
+              `data-bs-toggle` = "collapse", `data-bs-target` = "#brand-body",
+              `aria-expanded` = "true", `aria-controls` = "brand-body",
+              span(class = "ct-label", "About"), span(class = "ct-chev", "▲")))),
+    # The banner holds only what is true of the whole app: what the grades are
+    # and where the data came from. Anything that explains one view's figures or
+    # controls belongs in that view's sidebar, which is where a reader is already
+    # looking when they need it -- including what each view is computed on, which
+    # the Data tab's basis card states in full.
+    div(
+      id = "brand-body", class = "collapse show",
+      # Written for a reader who has never heard of redlining, so the first
+      # paragraph is the history in plain terms: what the grades were, that the
+      # scale runs best to hazardous, and where the word comes from. The
+      # Mapping Inequality link is not here -- the sourcing rows below carry it,
+      # and citing it twice in one banner is what this rewrite removed.
+      p(class = "app-brand-lede",
+        "In the 1930s the federal Home Owners' Loan Corporation (HOLC)",
+        "surveyed more than 200 American cities and rated every neighborhood",
+        "A (best) through D (hazardous) for mortgage lending risk. The grades",
+        "tracked who lived there: neighborhoods with Black, immigrant, and",
+        "low-income residents were routinely marked D, colored red on the map,",
+        "and largely shut out of federally backed mortgage lending, which is",
+        "where the term redlining comes from."),
+      # Second paragraph answers the question a newcomer actually has, which is
+      # why a mortgage map would predict a highway. Both directions are stated
+      # because both are documented and they run opposite ways: appraisers
+      # logged rail and industry already on the ground as detrimental
+      # influences, and the interstates came after. Two claims deliberately not
+      # made -- that rail shaped the grades (what is documented is the appraisal
+      # practice, not the counterfactual) and that highway planners consulted
+      # the HOLC maps (no source; what Archer 2020 documents is shared blight
+      # logic and routing through already-downgraded areas). The close hands the
+      # direction of the gradient to the panels rather than promising one:
+      # aviation noise is flat across grades and aviation NO peaks at B, so a
+      # banner asserting a direction would be contradicted on screen. Every
+      # citation sits mid-sentence, so this paragraph is one HTML string for the
+      # reason ext_link() exists.
+      p(class = "app-brand-lede", HTML(paste0(
+        "Transportation runs through this story in both directions. Appraisers ",
+        "marked neighborhoods down for nearby rail yards, factories, and smoke, ",
+        "so infrastructure already on the ground fed into the grade, and the ",
+        "interstate highways built from the 1950s on ran disproportionately ",
+        "through areas that had been graded down. Ninety years later the grades ",
+        "still track environmental burden: formerly D-graded neighborhoods have ",
+        "more air pollution (",
+        ext_link("https://doi.org/10.1021/acs.estlett.1c01012",
+                 "Lane et al. 2022"),
+        "), more transportation noise (",
+        ext_link("https://doi.org/10.1038/s41370-024-00682-x",
+                 "Collins and Grineski 2025"),
+        "), fewer trees (",
+        ext_link("https://doi.org/10.1016/j.socscimed.2019.112758",
+                 "Namin et al. 2020"),
+        "), and more urban heat (",
+        ext_link("https://doi.org/10.3390/su13031511",
+                 "Saverino et al. 2021"),
+        "), a pattern found nearly everywhere it has been tested (",
+        ext_link("https://doi.org/10.1007/s11524-022-00665-z",
+                 "Swope et al. 2022"),
+        "). This dashboard maps present-day transportation emissions onto those ",
+        "grades, one source at a time."))),
+      # Sourcing only, one source per line. Each names the quantity the app
+      # computes, then its publisher, and links out. Every input is public, so
+      # a reader who wants the unit, the vintage detail, or the methodology is
+      # better served by the source's own page than by a longer line here.
+      div(class = "app-brand-fine",
+        span(class = "fine-h", "Data"),
+        tags$ul(
+          class = "fine-src",
+          tags$li(HTML(paste0(
+            "<b>Air pollutants.</b> NEMO, from the US EPA ",
+            ext_link(paste0("https://www.epa.gov/air-emissions-inventories/",
+                            "national-emissions-inventory-nei"),
+                     "National Emissions Inventory"), " 2017."))),
+          tags$li(HTML(paste0(
+            "<b>Noise.</b> ",
+            ext_link(paste0("https://www.bts.gov/geospatial/",
+                            "national-transportation-noise-map"),
+                     "National Transportation Noise Map"),
+            ", US Bureau of Transportation Statistics."))),
+          tags$li(HTML(paste0(
+            "<b>Redlining maps.</b> ",
+            ext_link("https://dsl.richmond.edu/panorama/redlining/",
+                     "Mapping Inequality"),
+            ", University of Richmond."))),
+          tags$li(HTML(paste0(
+            "<b>Sociodemographics.</b> ",
+            ext_link("https://www.census.gov/programs-surveys/acs",
+                     "American Community Survey"),
+            " 2019, US Census Bureau."))),
+          tags$li(HTML(paste0(
+            "<b>Infrastructure overlay.</b> ",
+            ext_link("https://www.bts.gov/ntad",
+                     "National Transportation Atlas Database"),
+            ", US Bureau of Transportation Statistics.")))))
+    )
   ),
   theme = bs_theme(version = 5, bootswatch = "cosmo"),
   fillable = FALSE,
@@ -192,37 +353,83 @@ ui <- page_sidebar(
                 selected = "Rail"),
     selectInput("poll", "Emission Type", choices = pollutants,
                 selected = "Noise"),
-    radioButtons("basemap", "Basemap", choices = basemaps,
-                 selected = "light", inline = TRUE),
-    # Satellite is unreadable under an opaque choropleth, so the fill has to be
-    # dimmable for the imagery to be worth switching to at all.
-    sliderInput("fillop", "Fill opacity", min = 0.2, max = 1, value = 0.8,
-                step = 0.05, ticks = FALSE),
+    # City, Emission Source, and Emission Type stay visible in both views: the
+    # first two also pick the chart's overlay city and its tinted panel, and the
+    # third sets which pollutant the whole national view is about. Everything
+    # below this point belongs to one view or the other.
+    #
+    # The undefined arm matters throughout: conditionalPanel is evaluated
+    # client-side, and on the very first paint input.view may not have arrived
+    # yet. Without it the map's own controls and figures would be hidden on the
+    # view they belong to. Hidden inputs stay in the DOM, so the draw observers
+    # keep reading basemap and opacity while the reader is on the other tab.
+    conditionalPanel(
+      condition = "input.view === 'map' || input.view === undefined",
+      radioButtons("basemap", "Basemap", choices = basemaps,
+                   selected = "light", inline = TRUE),
+      # Satellite is unreadable under an opaque choropleth, so the fill has to be
+      # dimmable for the imagery to be worth switching to at all.
+      sliderInput("fillop", "Fill opacity", min = 0.2, max = 1, value = 0.8,
+                  step = 0.05, ticks = FALSE)
+    ),
+    # Group by acts on the chart alone, so it sits with the view that has the
+    # chart. It was kept out of the sidebar while the sidebar held map controls
+    # on every view, where it read as a fourth one; now that the sidebar is
+    # split, the Data sidebar has no map controls for it to be confused with.
+    conditionalPanel(
+      condition = "input.view === 'national'",
+      selectInput("eby", "Group by", choices = equity_by, selected = "grade")
+    ),
     hr(),
-    # What the map shows now lives in the banner; what is left here is tied to
-    # the controls beside it.
-    helpText(
-      "Hover a zone for its grade, exposure, and demographics.",
-      "Use the layer control (top-right of the map) to switch between the",
-      "exposure and HOLC-grade fill views.",
-      "Switch the basemap to Satellite and turn the fill opacity down to see",
-      "what the infrastructure driving the exposure actually is."
+    # Per-city figures live in the sidebar, beside the selectors that drive
+    # them, which leaves the Map view itself as nothing but the map. Stacked
+    # rather than in a row: at 330px there is no width for three across.
+    conditionalPanel(
+      condition = "input.view === 'map' || input.view === undefined",
+      div(class = "side-stats",
+          # No title: five blocks, A-D in the legend's grade colors plus the
+          # city total in grey. The grade letters caption the blocks, so a
+          # header would only repeat what the numbers already read as.
+          card(class = "gcount-card", uiOutput("vb_n_grades")),
+          card(class = "pres-card", uiOutput("vb_city_presence")),
+          card(class = "pres-card", uiOutput("vb_city_rank"))),
+      hr(),
+      # Reading notes for the map, moved out of the banner: they explain this
+      # view's figures and nothing else.
+      helpText(
+        "Each polygon is one graded neighborhood, shaded by modeled exposure on",
+        "a log scale, darker meaning higher. The scale is fitted to the selected",
+        "city, so it reads the spread within that city and colors are not",
+        "comparable between cities. Zones with no measurable exposure get their",
+        "own shade, because an absence is not a low value."
+      ),
+      helpText(
+        "Hover a zone for its grade, exposure, and demographics.",
+        "Use the layer control (top-right of the map) to switch between the",
+        "exposure and HOLC-grade fill views, and to turn the highway, rail, and",
+        "airport layers on and off. The layer matching the source you picked is",
+        "drawn by default and follows the selector.",
+        "Switch the basemap to Satellite and turn the fill opacity down to see",
+        "the infrastructure on the ground beneath the zones."
+      )
     ),
-    helpText(
-      HTML("<b>Chart:</b> exposure across all mapped cities, with the selected",
-           "city's zones overlaid. Use <b>Group by</b>, above the chart, to",
-           "regroup the same zones by HOLC grade or by a demographic quintile",
-           "(income, %&nbsp;Hispanic, %&nbsp;Black): does the disparity follow",
-           "redlining, income, or present-day demographics?")
-    ),
-    helpText(HTML(paste(
-      "<small>All three emission sources are shown. Aviation is sparse",
-      "&mdash; 54&ndash;78% of mapped zones have no measurable aviation",
-      "exposure, so read",
-      "its &ldquo;% none&rdquo; row alongside its boxes. No combined index (CEI)",
-      "is reported. Source: redenv (Weesner &amp; Lim, UA). NEMO emissions (EPA",
-      "NEI 2017); BTS noise; HOLC via Mapping Inequality; ACS 2019. Work sample",
-      "&mdash; descriptive, not a published or causal result.</small>")))
+    conditionalPanel(
+      condition = "input.view === 'national'",
+      helpText(
+        HTML("<b>Chart:</b> exposure across every graded zone in the study,",
+             "with the selected city's zones overlaid. Use <b>Group by</b> to",
+             "regroup the same zones by HOLC grade or by a demographic quintile",
+             "(income, %&nbsp;Hispanic, %&nbsp;Black): does the disparity follow",
+             "redlining, income, or present-day demographics?")
+      ),
+      helpText(
+        HTML("Each sector is indexed to the median of its own leftmost group, so",
+             "every panel starts at 1.0 and the last group's height is that",
+             "sector's disparity ratio. Levels are not comparable between",
+             "panels; the map carries level. The method note under the chart",
+             "states the population and what the grouping does not control for.")
+      )
+    )
   ),
   # Banner: the navbar and its container are flex rows by default, which would
   # hold the banner's blocks on one line, so both go to block flow. The bottom
@@ -236,87 +443,288 @@ ui <- page_sidebar(
                border-bottom: 3px solid transparent;
                border-image: linear-gradient(to right, #76a865, #7cb5bd,
                              #ffff00, #d9838d) 1; }
-     .app-brand-title { font-size: 2.05rem; font-weight: 700;
-                        line-height: 1.1; letter-spacing: -.02em;
-                        margin-bottom: .2rem; }
-     .app-brand-sub { font-size: .95rem; font-weight: 400; opacity: .7;
-                      line-height: 1.3; margin-bottom: .85rem; }
+     /* Long enough to wrap on a narrow window, so it is balanced rather than
+        left to strand a word, and it takes the row's free space while the
+        controls beside it keep their intrinsic width. */
+     .app-brand-title { font-size: 1.8rem; font-weight: 700;
+                        line-height: 1.15; letter-spacing: -.02em;
+                        text-wrap: balance; margin: 0;
+                        flex: 1 1 auto; min-width: 0; }
      .app-brand-lede { font-size: .9rem; line-height: 1.5; opacity: .85;
                        max-width: 95ch; margin-bottom: .4rem; }
      .app-brand-lede:last-child { margin-bottom: 0; }
+     /* Sourcing and caveats: app-wide, so they sit here rather than in one
+        view's sidebar, at a weight that keeps them out of the lede's way. */
+     /* Dimmed, but less than a pure caveat block would be: the sourcing lines
+        carry links now, and a link at .6 opacity does not read as clickable. */
+     .app-brand-fine { font-size: .75rem; line-height: 1.45; opacity: .72;
+                       max-width: 95ch; margin: .6rem 0 0; }
+     .fine-h { font-weight: 700; letter-spacing: .06em; font-size: .68rem;
+               text-transform: uppercase; }
+     /* One source per row. The lines are short enough now that two columns
+        would only make the reader's eye jump; the markers sit inside the text
+        block rather than hanging outside it, so the list keeps the lede's
+        left edge. */
+     .fine-src { margin: .2rem 0 0; padding-left: 1.1rem; }
+     .fine-src > li { margin-bottom: .15rem; }
+     .fine-src b { font-weight: 600; opacity: .9; }
+     .fine-src a { text-underline-offset: .15em; }
      @media (max-width: 700px) {
        .app-brand-title { font-size: 1.5rem; }
        .navbar { padding: 1.1rem 0 .9rem; }
      }
-     .chart-ctl { width: 230px; flex: 0 0 auto; }
-     .chart-ctl .form-group, .chart-ctl .shiny-input-container { margin-bottom: 0; }
-     .chart-ctl label { margin-bottom: .1rem; font-size: .78rem;
-                        font-weight: 500; opacity: .75; }
-     .chart-ctl .form-select, .chart-ctl select { padding-top: .2rem;
-                        padding-bottom: .2rem; font-size: .85rem; }
-     .vb-grades { margin-top: .4rem; display: grid; gap: .22rem;
-                  grid-template-columns: repeat(4, 1fr); }
-     .vb-grade { border-radius: .25rem; padding: .28rem .1rem .22rem;
-                 text-align: center; color: #1a1a1a; line-height: 1.05; }
-     .vb-grade-g { font-size: .68rem; font-weight: 600; opacity: .7;
-                   letter-spacing: .04em; }
-     .vb-grade-n { font-size: 1.05rem; font-weight: 700;
-                   font-variant-numeric: tabular-nums; }
-     .vb-bars { font-size: .78rem; }
-     .vb-bar-row { display: flex; align-items: center; gap: .4rem;
-                   margin-bottom: .22rem; }
-     .vb-bar-lab { width: 4.2rem; flex: 0 0 auto; }
-     .vb-bar-track { flex: 1 1 auto; height: .45rem; border-radius: .225rem;
-                     background: rgba(0,0,0,.12); }
-     .vb-bar-fill { height: 100%; border-radius: .225rem; }
-     .vb-bar-val { width: 2.4rem; flex: 0 0 auto; text-align: right;
-                   font-weight: 600; font-variant-numeric: tabular-nums; }
      .vb-note { margin-top: .45rem; font-size: .7rem; line-height: 1.35;
-                opacity: .65; }"))),
-  card(
-    full_screen = TRUE, height = 540,
-    card_header(textOutput("map_title", inline = TRUE),
-                uiOutput("map_note", inline = TRUE)),
-    leafletOutput("map", height = 500)
-  ),
-  # The boxes sit between the map and the chart rather than above the map: two
-  # of the three are read against the map (the city's grade composition, the
-  # D:A ratio the choropleth is a picture of), so they belong after the reader
-  # has seen it, and they no longer push the map itself below the fold.
-  layout_columns(
-    fill = FALSE,
-    value_box(title = "Grade D vs. A intensity (zones with exposure)",
-              value = textOutput("vb_ratio"), theme = "primary"),
-    # The bare total says how much is on screen but not what it is made of, and
-    # grade composition is uneven enough between cities to change how the map
-    # reads -- so the count breaks out A-D, colored to match the legend.
-    value_box(title = "Zones mapped in city",
-              value = textOutput("vb_n"),
-              uiOutput("vb_n_grades"),
-              theme = "secondary"),
-    # No headline sector. Naming a winner in the value slot restates the top bar
-    # and makes the box read as a verdict; the three shares ARE the finding, and
-    # the reader should see rail's lead and aviation's edge over road as one
-    # picture. The percentage needs a gloss to mean anything, so it gets one
-    # underneath rather than a cryptic label above the bars.
-    value_box(title = "Sector stratification",
-              value = uiOutput("vb_rank_bars"),
-              uiOutput("vb_rank_note"),
-              theme = "light")
-  ),
-  card(
-    height = 430,
-    # The grouping control lives in this card, not the sidebar: it acts on the
-    # chart alone, and next to the sidebar's city/sector/pollutant inputs (which
-    # all drive the map) it read as a fourth map control.
-    card_header(
-      div(class = "d-flex justify-content-between align-items-center gap-3",
-          textOutput("chart_title", inline = TRUE),
-          div(class = "chart-ctl",
-              selectInput("eby", "Group by", choices = equity_by,
-                          selected = "grade", width = "100%")))
+                opacity: .65; }
+     /* Per-city figures in the sidebar. Stacked with a gap of their own, and
+        the cards give up their fill behaviour: in a sidebar they size to their
+        contents rather than stretching to a row's height. */
+     .side-stats { display: flex; flex-direction: column; gap: .5rem; }
+     .side-stats > .card { flex: 0 0 auto; }
+     /* Collapse toggles, shared by the banner and the statistics region so both
+        read as the same control. The chevron is rotated by CSS off Bootstrap's
+        own aria-expanded state rather than swapped in JS, which keeps the arrow
+        correct even when the panel is toggled from somewhere else. */
+     .brand-head { display: flex; align-items: center;
+                   justify-content: space-between; gap: 1.4rem;
+                   margin-bottom: .85rem; }
+     .brand-actions { display: flex; align-items: center; gap: .85rem;
+                      flex: 0 0 auto; }
+     .collapse-toggle { border: 1px solid rgba(0,0,0,.18); background: #fff;
+                        border-radius: 999px; padding: .16rem .6rem;
+                        font-size: .74rem; font-weight: 600; color: #33383d;
+                        display: inline-flex; align-items: center; gap: .35rem;
+                        flex: 0 0 auto; }
+     .collapse-toggle:hover { background: #f0f0ee; }
+     .ct-chev { font-size: .58rem; transition: transform .18s ease;
+                display: inline-block; }
+     .collapse-toggle[aria-expanded='false'] .ct-chev { transform: rotate(180deg); }
+     .stats-basis { font-size: .74rem; line-height: 1.45; opacity: .7; }
+     .method { font-size: .72rem; line-height: 1.45; opacity: .72;
+               padding: .1rem .2rem .3rem; }
+     .method b { font-weight: 600; opacity: .9; }
+     .method p { margin-bottom: .3rem; }
+     .method p:last-child { margin-bottom: 0; }
+     /* Grade counts as stacked horizontal bars, no title above them. Bars are
+        scaled to the city total rather than to the largest grade, so every bar
+        reads as its share of the whole city and the grey total bar is the
+        full-width reference the four sit inside. Vertical stacking puts the
+        grade letters in a column the eye can run down in legend order. */
+     .gcount-card { padding: .6rem .7rem; }
+     .gcount { display: flex; flex-direction: column; gap: .3rem;
+               height: 100%; justify-content: center; }
+     .grow { display: flex; align-items: center; gap: .5rem; }
+     .grow-lab { width: 2rem; flex: 0 0 auto; font-size: .74rem;
+                 font-weight: 700; letter-spacing: .03em; opacity: .8; }
+     .grow-track { flex: 1 1 auto; height: 1.2rem; border-radius: .25rem;
+                   background: rgba(0,0,0,.06); }
+     .grow-fill { height: 100%; border-radius: .25rem; min-width: 2px; }
+     .grow-n { width: 3.4rem; flex: 0 0 auto; text-align: right;
+               font-size: .95rem; font-weight: 700;
+               font-variant-numeric: tabular-nums; }
+     /* D-vs-A bars: proportional, not to scale in real units. The underlying xp
+        medians span 0.47 to 2.6e5 across sector x pollutant in arbitrary model
+        units, so printing them would add a number the reader cannot interpret.
+        The bars carry the ratio as a picture; n is shown because grade A is the
+        small-N constraint everywhere in this project. */
+     .da { margin-top: .5rem; }
+     .da-row { display: flex; align-items: center; gap: .45rem;
+               margin-bottom: .3rem; }
+     .da-lab { width: 1rem; flex: 0 0 auto; font-weight: 700; font-size: .8rem; }
+     .da-track { flex: 1 1 auto; height: .7rem; border-radius: .35rem;
+                 background: rgba(0,0,0,.08); }
+     .da-fill { height: 100%; border-radius: .35rem; }
+     .da-n { width: 4.4rem; flex: 0 0 auto; text-align: right;
+             font-size: .68rem; opacity: .7;
+             font-variant-numeric: tabular-nums; }
+     .infra-key { margin-top: .3rem; font-size: .74rem; font-weight: 400;
+                  opacity: .8; display: flex; flex-wrap: wrap; gap: .1rem .9rem;
+                  align-items: center; }
+     .infra-key > span { display: inline-flex; align-items: center;
+                         gap: .3rem; }
+     .ik-line { width: 1.1rem; height: 3px; border-radius: 1px; }
+     .ik-dash { background-image: linear-gradient(to right,
+                  transparent 45%, #ffffff 45%, #ffffff 62%, transparent 62%); }
+     .ik-dot { width: .55rem; height: .55rem; border-radius: 50%;
+               border: 1px solid #333; }
+     .ik-note { opacity: .7; font-style: italic; }
+     /* View toggle, drawn as a two-position switch: a sunken track holding both
+        labels, with a raised thumb that slides under whichever is active. It
+        sits at the banner's right edge, which is what makes it read as a
+        page-level switch rather than a third map control.
+        Active state is read off the anchor, a.nav-link.active, because that is
+        what shiny actually serves inside a live session: buildTabset picks its
+        markup from the current theme, so a BS5 page gets BS5 tabs and the li
+        carries only .nav-item. (Rendering the same navset outside a session
+        yields the legacy li.active form instead, which is a trap -- it is not
+        what the browser receives.) Both spellings are matched anyway, so the
+        switch cannot go dead again if that choice moves.
+        Because the anchors do carry .nav-link, BS5's own .nav-underline rules
+        engage and draw a bottom border under the label; it is cleared below,
+        since an underline inside the pill is not what a switch looks like.
+        The track carries its own solid colors rather than tinting whatever is
+        behind it, so the contrast holds wherever the switch is placed.
+        The nav is hidden until the script has moved it into #brand-views: the
+        rule is on the element itself and the exception is scoped to the slot,
+        so it can never flash in the position it is authored in. */
+     #view { visibility: hidden; position: relative; display: inline-flex;
+             gap: 0; padding: 3px; margin: 0; min-width: 10.5rem;
+             background: #dfe1e0; border: 1px solid rgba(0,0,0,.14);
+             border-radius: 999px;
+             box-shadow: inset 0 1px 2px rgba(0,0,0,.10); }
+     #brand-views #view { visibility: visible; }
+     /* The thumb, filled in the theme's primary blue so the selected view is
+        carried by hue and not only by position -- a white-on-grey thumb reads
+        as texture, and which side it sits on is the thing that has to be
+        unmissable. Two panels exactly, so its width is half the track and the
+        active position is a single translate. */
+     #view::before { content: ''; position: absolute; top: 3px; bottom: 3px;
+                     left: 3px; width: calc(50% - 3px); border-radius: 999px;
+                     background: #2780e3;
+                     box-shadow: 0 1px 3px rgba(0,0,0,.28);
+                     transition: transform .22s cubic-bezier(.4,0,.2,1); }
+     #view:has(> li:nth-child(2) > a.active)::before,
+     #view:has(> li:nth-child(2).active)::before { transform: translateX(100%); }
+     /* Equal halves, or the thumb lands off the label it belongs to. */
+     #view > li { flex: 1 1 0; min-width: 0; position: relative; z-index: 1; }
+     #view > li > a { display: block; text-align: center; text-decoration: none;
+                      padding: .26rem .95rem; border-radius: 999px;
+                      border-bottom: 0; background: none;
+                      font-size: .85rem; font-weight: 600; letter-spacing: .02em;
+                      color: #495057; transition: color .18s ease; }
+     #view > li > a:hover { color: #1d2124; border-bottom: 0; }
+     #view > li > a.active,
+     #view > li.active > a { color: #ffffff; border-bottom: 0; }
+     /* Without :has() the thumb cannot follow the active panel, so drop it and
+        paint the active label instead. Same look, no slide. */
+     @supports not selector(:has(*)) {
+       #view::before { display: none; }
+       #view > li > a.active,
+       #view > li.active > a { background: #2780e3; color: #ffffff;
+                               box-shadow: 0 1px 3px rgba(0,0,0,.28); }
+     }
+     /* The empty .tabbable leaves the nav's line height behind once the list is
+        gone; the panels start at the top of the content area instead. */
+     .tabbable > .tab-content { margin-top: 0; }
+     .basis-card { padding: .7rem .85rem; }
+     .basis-h { font-size: .78rem; font-weight: 700; letter-spacing: .02em;
+                text-transform: uppercase; opacity: .55;
+                margin-bottom: .25rem; }
+     /* Per-city cards. One number each, sized between the grade-count numerals
+        and a value_box headline, so the three stacked cards read as one family
+        without any of them shouting. */
+     .pres-card { padding: .6rem .75rem; }
+     .pres { display: flex; flex-direction: column; height: 100%;
+             justify-content: center; }
+     .pres-lab { font-size: .74rem; font-weight: 600; opacity: .6;
+                 letter-spacing: .01em; }
+     .pres-val { font-size: 1.75rem; font-weight: 700; line-height: 1.1;
+                 font-variant-numeric: tabular-nums; margin: .1rem 0 .15rem; }
+     .pres-sub { font-size: .7rem; line-height: 1.35; opacity: .65; }
+     .pres-track { position: relative; height: .55rem; border-radius: .3rem;
+                   background: rgba(0,0,0,.08); margin: .35rem 0 .3rem; }
+     .pres-fill { height: 100%; border-radius: .3rem; background: #7f8c8d; }
+     /* The rank marker is a position on the national spread, not a quantity,
+        so it is a tick on the track rather than a bar filling it. */
+     .pres-mark { position: absolute; top: -.15rem; width: 3px;
+                  height: .85rem; border-radius: 1px; background: #2c3e50;
+                  transform: translateX(-1.5px); }"))),
+  # A leaflet map initialised inside a tab panel comes back with a collapsed
+  # canvas after the tab is hidden and shown again, because it sized itself
+  # while the panel had no dimensions. leaflet tracks window resize by default,
+  # so firing one after Bootstrap finishes the tab switch is enough; there is no
+  # invalidateSize on leafletProxy to call instead.
+  tags$head(tags$script(HTML(
+    "$(document).on('shown.bs.tab', function() {
+       window.dispatchEvent(new Event('resize'));
+     });"))),
+  # Move the view toggle into the banner slot beside the subtitle. The nav list
+  # is relocated rather than rebuilt because everything that makes the toggle
+  # work is attached to that element -- shiny's tab input binding reads it as
+  # #view, and bootstrap drives the panels off each anchor's data-bs-target.
+  # Both survive the move: bootstrap's tab handler is delegated on document and
+  # targets panels by id, not by DOM adjacency, and jQuery keeps the binding
+  # with the node. It runs on shiny:sessioninitialized so every ready-time
+  # initialiser has already seen the nav where it was authored.
+  tags$head(tags$script(HTML(
+    "$(document).on('shiny:sessioninitialized', function() {
+       $('#brand-views').append($('#view'));
+     });"))),
+  # Two views, one toggle. The map answers for a single city and the statistics
+  # answer for the whole study frame; holding both on one screen meant every
+  # number had to carry a basis note to stop a reader taking a national ratio
+  # for the mapped city's. Splitting them makes the basis a property of the view
+  # instead of an annotation on each figure. nav_panel values are set explicitly
+  # because the sidebar's conditionalPanels match on them, and a title is a
+  # label that may be reworded.
+  navset_underline(
+    id = "view",
+    nav_panel(
+      title = "Map", value = "map",
+      card(
+        full_screen = TRUE, height = 540,
+        # The overlay key is static text rather than a leaflet legend: the
+        # legend would have to appear and disappear with three independently
+        # toggled groups, and a fixed key that names all three reads the same
+        # whichever is on. It also carries the clip caveat, which a color legend
+        # could not.
+        card_header(textOutput("map_title", inline = TRUE),
+                    uiOutput("map_note", inline = TRUE),
+                    div(class = "infra-key",
+                        span(span(class = "ik-line",
+                                  style = "background:#1a1a1a;"),
+                             "Interstates & freeways"),
+                        span(span(class = "ik-line ik-dash",
+                                  style = "background:#6a3d9a;"), "Rail track"),
+                        span(span(class = "ik-dot",
+                                  style = "background:#00e5ff;"), "Airports"),
+                        span(class = "ik-note",
+                             paste("toggle top right; clipped to the city view,",
+                                   "so lines stop if you zoom out")))),
+        leafletOutput("map", height = 500)
+      )
+      # The per-city figures that used to sit in a row here are in the sidebar
+      # now, beside the selectors that drive them. This view is the map.
     ),
-    plotOutput("equity", height = 340)
+    nav_panel(
+      title = "Data", value = "national",
+      layout_columns(
+        fill = FALSE, col_widths = c(5, 7),
+        # The ratio alone was a bare "2.00x" with no sense of what was being
+        # divided by what, so the two grade medians are drawn as proportional
+        # bars beneath it. The bars are relative only -- see the .da CSS note on
+        # why the raw medians are not printed -- and each carries its n, because
+        # grade A is thin enough in most cities that the reader should see what
+        # the median rests on.
+        value_box(title = "Redlined (D) vs. best-graded (A)",
+                  value = textOutput("vb_ratio"),
+                  uiOutput("vb_ratio_detail"), theme = "primary"),
+        # Static, not an output: this states what the whole tab is computed on,
+        # and nothing in it moves with an input.
+        card(
+          class = "basis-card",
+          div(class = "basis-h", "What this view covers"),
+          div(class = "stats-basis",
+              sprintf(paste("Every one of the %s HOLC-graded zones in the",
+                            "study, %d cities across %d states. The Map",
+                            "tab draws a %s-zone subset chosen to keep the",
+                            "choropleth legible, which does not narrow anything",
+                            "here. The city selected in the sidebar changes only",
+                            "the points overlaid on the chart below."),
+                      format(nrow(frame), big.mark = ","), frame_cities,
+                      frame_states, format(nrow(zones), big.mark = ","))))
+      ),
+      card(
+        # No fixed height: the method block sits under the plot and its length
+        # moves with the grouping, so a pinned height would clip it.
+        # Group by is in this view's sidebar, with the rest of its controls.
+        card_header(textOutput("chart_title", inline = TRUE)),
+        plotOutput("equity", height = 340),
+        # Sample and method sit with the plot rather than in the sidebar: they
+        # are what the reader needs to judge the chart, and a caveat filed
+        # somewhere else is a caveat nobody reads.
+        div(class = "method", uiOutput("method_note"))
+      )
+    )
   )
 )
 
@@ -335,6 +743,21 @@ server <- function(input, output, session) {
   exp_sel <- reactive({
     exp[exp$sector == input$sector & exp$pollutant == input$poll,
         c("HOLCID", "xp", "logxp")]
+  })
+
+  # All three sectors at the selected pollutant, on the FULL 8,920-zone frame.
+  # The equity chart compares sectors side by side, so it cannot read exp_sel(),
+  # which is narrowed to the one sector the map is drawing; and it reads the
+  # frame rather than `exp`, because min_zones is a map-legibility filter with
+  # no bearing on which zones the statistics should describe.
+  exp_poll <- reactive({
+    exp_frame[exp_frame$pollutant == input$poll, c("HOLCID", "sector", "xp")]
+  })
+
+  # Frame-basis slice for the D:A box, same reasoning.
+  exp_sel_frame <- reactive({
+    exp_frame[exp_frame$sector == input$sector &
+              exp_frame$pollutant == input$poll, c("HOLCID", "xp")]
   })
 
   # NONZERO logxp values for the SELECTED CITY -- the ramp domain and the legend
@@ -409,26 +832,64 @@ server <- function(input, output, session) {
   })
 
   eby_label <- reactive(names(equity_by)[equity_by == input$eby])
+  # The sector is no longer named here: all three are on the chart, and naming
+  # the selected one would suggest the panel follows the map's selector.
   output$chart_title <- renderText({
-    grp <- if (input$eby == "grade") "HOLC grades"
-           else sprintf("%s quintiles", eby_label())
-    sprintf("%s %s exposure across %s (pooled)",
-            tools::toTitleCase(sector_label()), poll_label(), grp)
+    grp <- if (input$eby == "grade") "HOLC grade"
+           else sprintf("%s quintile", eby_label())
+    sprintf("%s exposure by %s, all three sectors",
+            tools::toTitleCase(poll_label()), grp)
   })
 
   # ---- value boxes ----
   # Intensity ratio only -- medians over zones that HAVE exposure, matching the
   # equity chart's boxes. Pooling in the zeros would report presence x intensity
   # as though it were intensity alone (rail noise: 19.3x pooled vs 3.1x here).
-  output$vb_ratio <- renderText({
-    e <- merge(exp_sel(),
-               as.data.frame(zones)[, c("HOLCID", "grade")], by = "HOLCID")
+  # Both the headline ratio and the bars under it read from one place, so the
+  # picture can never disagree with the number above it.
+  da_stats <- reactive({
+    e <- merge(exp_sel_frame(), frame[, c("HOLCID", "grade")], by = "HOLCID")
     e <- e[!is.na(e$xp) & e$xp > 0, ]
-    mA <- median(e$xp[e$grade == "A"], na.rm = TRUE)
-    mD <- median(e$xp[e$grade == "D"], na.rm = TRUE)
-    if (is.na(mA) || is.na(mD) || mA == 0) "n/a" else sprintf("%.2fx", mD / mA)
+    list(mA = median(e$xp[e$grade == "A"], na.rm = TRUE),
+         mD = median(e$xp[e$grade == "D"], na.rm = TRUE),
+         nA = sum(e$grade == "A"), nD = sum(e$grade == "D"))
   })
-  output$vb_n   <- renderText(format(nrow(city_zones()), big.mark = ","))
+
+  output$vb_ratio <- renderText({
+    s <- da_stats()
+    if (is.na(s$mA) || is.na(s$mD) || s$mA == 0) "n/a"
+    else sprintf("%.1f×", s$mD / s$mA)
+  })
+
+  # Bar widths are each median as a share of the larger of the two, so the pair
+  # is a picture of the ratio itself. The basis line stays even though this box
+  # now sits in a view that states its own basis: the project keeps two number
+  # bases that differ materially (rail noise D:A is 2.96x here against 2.0x on
+  # the mapped bundle), so any figure quoted out of the app still has to say
+  # which one it came from.
+  output$vb_ratio_detail <- renderUI({
+    s <- da_stats()
+    if (is.na(s$mA) || is.na(s$mD) || s$mA == 0)
+      return(div(class = "vb-note",
+                 "No zones with measurable exposure in one of the two grades."))
+    mx  <- max(s$mA, s$mD)
+    bar <- function(g, m, n) div(
+      class = "da-row",
+      span(class = "da-lab", g),
+      div(class = "da-track",
+          div(class = "da-fill",
+              style = sprintf("width:%.1f%%; background:%s;",
+                              100 * m / mx, grade_cols[[g]]))),
+      span(class = "da-n", sprintf("n=%s", format(n, big.mark = ","))))
+    tagList(
+      div(class = "da", bar("A", s$mA, s$nA), bar("D", s$mD, s$nD)),
+      div(class = "vb-note",
+          sprintf(paste("Median %s %s exposure, grade D against grade A.",
+                        "Zones with measurable exposure only; zeros excluded.",
+                        "All %s graded zones in %d cities."),
+                  sector_label(), poll_label(),
+                  format(nrow(frame), big.mark = ","), frame_cities)))
+  })
 
   # Grade composition of the mapped city. A city with 12 grade-A zones and 300
   # grade-D zones supports a very different reading of the same choropleth than
@@ -437,63 +898,113 @@ server <- function(input, output, session) {
   # the same grade palette as the map legend and the chart. factor() over the
   # full level set keeps a grade with zero zones visible as "0" rather than
   # silently dropping out of the row.
-  # A four-up grid, not a chip row: the counts are the content here, so each
-  # grade gets equal width and its number is set large, with the letter as the
-  # small caption above it. A flowing row of same-size chips buried the numbers
-  # in their own labels.
+  # Five stacked bars, no title above them: A-D in the legend's grade colors,
+  # then the city total in grey. Bars are scaled to the total, so each grade
+  # reads as its share of the city and the grey bar is the full-width reference
+  # rather than a sixth category competing with the four. factor() over the full
+  # level set keeps a grade with no zones visible as a labeled "0" row instead of
+  # letting it vanish and leave a four-row stack that looks complete.
   output$vb_n_grades <- renderUI({
+    z   <- st_drop_geometry(city_zones())
+    n   <- table(factor(z$grade, levels = grade_levels))
+    tot <- nrow(z)
+    row <- function(lab, val, bg) div(
+      class = "grow",
+      title = sprintf("%s: %s of %s zones (%.0f%%)", lab,
+                      format(val, big.mark = ","), format(tot, big.mark = ","),
+                      100 * val / tot),
+      span(class = "grow-lab", lab),
+      div(class = "grow-track",
+          div(class = "grow-fill",
+              style = sprintf("width:%.1f%%; background:%s;",
+                              if (tot > 0) 100 * val / tot else 0, bg))),
+      span(class = "grow-n", format(val, big.mark = ",")))
+    div(class = "gcount",
+        lapply(grade_levels,
+               function(g) row(g, as.integer(n[[g]]), grade_cols[[g]])),
+        row("ALL", tot, "#c9c9c4"))
+  })
+
+  # Presence in the mapped city. The choropleth already shows the grey zones;
+  # this puts a number on them, and it is the figure in this row that moves with
+  # both the source and the type selector. Bundle basis, which for these cities
+  # is all of their graded zones -- min_zones drops whole cities, never zones
+  # inside a city it keeps -- so this is the city's real share, not a subset's.
+  output$vb_city_presence <- renderUI({
     z <- st_drop_geometry(city_zones())
-    n <- table(factor(z$grade, levels = grade_levels))
-    div(class = "vb-grades",
-        lapply(grade_levels, function(g)
-          div(class = "vb-grade",
-              style = sprintf("background:%s;", grade_cols[[g]]),
-              div(class = "vb-grade-g", g),
-              div(class = "vb-grade-n",
-                  format(as.integer(n[[g]]), big.mark = ",")))))
+    v <- z$xp[!is.na(z$xp)]
+    lab <- div(class = "pres-lab", "Zones with none")
+    if (!length(v))
+      return(div(class = "pres", lab,
+                 div(class = "pres-sub",
+                     "No exposure data for this source and type.")))
+    n0  <- sum(v == 0)
+    pct <- 100 * n0 / length(v)
+    div(
+      class = "pres", lab,
+      div(class = "pres-val", sprintf("%.0f%%", pct)),
+      div(class = "pres-track",
+          div(class = "pres-fill", style = sprintf("width:%.1f%%;", pct))),
+      div(class = "pres-sub",
+          sprintf(paste("%s of %s zones in %s have no measurable %s %s",
+                        "exposure. These are the grey zones on the map: an",
+                        "absence, not a low value."),
+                  format(n0, big.mark = ","), format(length(v), big.mark = ","),
+                  input$city, sector_label(), poll_label())))
   })
 
-  # Bar widths are the share itself (the three sum to 100%), not scaled to the
-  # leader, so the row reads as the split of first-place finishes rather than as
-  # a ranking. The leader is darker; the point of showing all three is that
-  # road, the sector a reader would expect to dominate, comes last.
-  output$vb_rank_bars <- renderUI({
-    div(class = "vb-bars",
-        lapply(seq_len(nrow(rank_tab)), function(i) {
-          div(class = "vb-bar-row",
-              title = sprintf("%s: %d of %d", rank_tab$sector[i],
-                              rank_tab$n_first_place[i], rank_n),
-              span(class = "vb-bar-lab", rank_tab$sector[i]),
-              div(class = "vb-bar-track",
-                  div(class = "vb-bar-fill",
-                      style = sprintf("width:%.1f%%; background:%s;",
-                                      rank_tab$pct_first[i],
-                                      if (i == 1) "#2c3e50" else "#9aa7b1"))),
-              span(class = "vb-bar-val",
-                   sprintf("%.0f%%", rank_tab$pct_first[i])))
-        }))
+  # Where the mapped city sits in the national spread. This is the only figure
+  # in the per-city row computed on the frame rather than the bundle, and it is
+  # the bridge between the two views: the map shows the spread inside one city,
+  # this says whether that city is a high- or low-exposure place to begin with.
+  # City medians are taken over zones WITH exposure, matching the D:A box and
+  # the chart, so a city with nothing measurable drops out of the comparison
+  # rather than sinking to the bottom of it -- for aviation that is most of
+  # them, which is why the denominator is stated rather than assumed to be 221.
+  city_rank_stats <- reactive({
+    req(input$city)
+    e <- merge(exp_sel_frame(), frame[, c("HOLCID", "place")], by = "HOLCID")
+    e <- e[!is.na(e$xp) & e$xp > 0, ]
+    if (!nrow(e)) return(NULL)
+    med <- tapply(e$xp, e$place, median, na.rm = TRUE)
+    med <- med[is.finite(med)]
+    i   <- match(input$city, names(med))
+    list(n = length(med),
+         pct = if (is.na(i)) NA_real_ else 100 * mean(med < med[[i]]))
   })
 
-  # What the percentage counts. "Steepest of the three" is the honest reading of
-  # a first-place finish: each comparison ranks the sectors against each other,
-  # it does not measure any one sector's disparity in absolute terms. Both
-  # counts are stated because they differ -- a tied comparison awards two first
-  # places, so 16 comparisons hand out 17 of them, and a reader checking the
-  # hover counts against the comparison total would otherwise find them short.
-  output$vb_rank_note <- renderUI({
-    div(class = "vb-note",
-        HTML(sprintf(paste(
-          "Share of %d first-place finishes across %d comparisons:",
-          "4 pollutants &times; 4 disparity measures (HOLC grade, income,",
-          "%% Hispanic, %% Black). First place = steepest gradient of the",
-          "three sectors; ties share the place."), rank_n, rank_cmp)))
+  output$vb_city_rank <- renderUI({
+    s   <- city_rank_stats()
+    lab <- div(class = "pres-lab", "City rank, nationally")
+    if (is.null(s) || is.na(s$pct))
+      return(div(class = "pres", lab,
+                 div(class = "pres-sub",
+                     sprintf(paste("No zone in %s has measurable %s %s",
+                                   "exposure, so the city does not place."),
+                             input$city, sector_label(), poll_label()))))
+    div(
+      class = "pres", lab,
+      div(class = "pres-val", ordinal(s$pct)),
+      div(class = "pres-track",
+          div(class = "pres-mark", style = sprintf("left:%.1f%%;", s$pct))),
+      div(class = "pres-sub",
+          sprintf(paste("Percentile of median %s %s exposure in %s, among the",
+                        "%d cities where any zone registers. Medians over",
+                        "zones with exposure only."),
+                  sector_label(), poll_label(), input$city, s$n)))
   })
+
 
   # ---- choropleth ----
   output$map <- renderLeaflet({
     leaflet(options = leafletOptions(minZoom = 3, preferCanvas = TRUE)) |>
       tiles_for("light") |>
       setView(lng = -96, lat = 38, zoom = 4) |>
+      # Infrastructure gets its own pane above the zone fills. Without it the
+      # lines would fall behind the polygons every time the choropleth redraws,
+      # since leaflet stacks by insertion order within a pane and the fills are
+      # re-added on every sector/pollutant change.
+      addMapPane("infra", zIndex = 450) |>
       # base-layer switches fire 'baselayerchange' (not the overlay events that
       # drive leaflet's group-linked legends), so show only the active layer's
       # legend manually; the MutationObserver re-applies when the proxy re-adds
@@ -562,8 +1073,11 @@ server <- function(input, output, session) {
     hcol <- if (sat) "#ffff00" else "#333333"
 
     bb <- as.numeric(st_bbox(z))
+    # clearGroup on the two fill groups, not clearShapes: the infrastructure
+    # lines are shapes too, and clearing them here would wipe an overlay the
+    # reader turned on every time they nudged the opacity slider.
     prox <- leafletProxy("map", data = z) |>
-      clearShapes() |> clearControls() |>
+      clearGroup("Exposure") |> clearGroup("HOLC grade") |> clearControls() |>
       # Exposure layer -- fill choropleth (thin neutral border)
       addPolygons(
         group = "Exposure",
@@ -587,6 +1101,7 @@ server <- function(input, output, session) {
       # stacked, so switch between them (default: Exposure)
       addLayersControl(
         baseGroups = c("Exposure", "HOLC grade"),
+        overlayGroups = unname(infra_groups),
         options = layersControlOptions(collapsed = FALSE)
       ) |>
       hideGroup("HOLC grade")
@@ -619,70 +1134,264 @@ server <- function(input, output, session) {
     }
   })
 
-  # ---- equity chart: national distribution by grade or demographic quintile,
-  #      with the selected city's zones overlaid as points --------------------
+  # ---- infrastructure overlay ------------------------------------------------
+  # Drawn in its own observer, keyed on the city and the basemap only. The
+  # geometry does not depend on sector or pollutant, so redrawing it whenever
+  # those change would re-render thousands of polylines (Los Angeles carries
+  # 3,628 highway and 4,009 rail segments) for no visible difference.
+  city_infra <- reactive({
+    req(input$city)
+    lapply(infra, function(x) x[x$place == input$city, ])
+  })
+
+  # Which overlay the sector selector implies. Kept as a function so the draw
+  # observer and the sector observer cannot drift apart.
+  default_group <- function(sector) unname(infra_groups[[sector]])
+  apply_infra_vis <- function(prox, sector) {
+    keep <- default_group(sector)
+    for (g in unname(infra_groups))
+      prox <- if (identical(g, keep)) showGroup(prox, g) else hideGroup(prox, g)
+    prox
+  }
+
+  # halo beneath, stroke on top -- see infra_style
+  add_line_layer <- function(prox, x, group, style, weight, dash = NULL) {
+    if (!nrow(x)) return(prox)
+    prox |>
+      addPolylines(data = x, group = group, color = style[["halo"]],
+                   weight = weight + 1.8, opacity = 0.55, dashArray = dash,
+                   options = pathOptions(pane = "infra", interactive = FALSE)) |>
+      addPolylines(data = x, group = group, color = style[["main"]],
+                   weight = weight, opacity = 0.95, dashArray = dash,
+                   label = x$lab,
+                   options = pathOptions(pane = "infra"))
+  }
+
+  observe({
+    ci  <- city_infra()
+    sty <- infra_style[[if (identical(input$basemap, "sat")) "sat" else "light"]]
+
+    rd <- ci$road
+    # Interstates carry more traffic than the other freeways in class 2 and are
+    # the segment of the network the redlining literature actually argues about,
+    # so they are drawn heavier. A segment with neither a route shield nor a
+    # street name in HPMS gets a generic label rather than an empty tooltip.
+    rd$lab <- ifelse(nzchar(rd$name), rd$name, "Limited-access highway")
+    has_aadt <- !is.na(rd$aadt) & rd$aadt > 0
+    rd$lab <- ifelse(has_aadt,
+                     sprintf("%s &middot; %s vehicles/day", rd$lab,
+                             format(round(rd$aadt), big.mark = ",",
+                                    scientific = FALSE, trim = TRUE)),
+                     rd$lab)
+    rd$lab <- lapply(rd$lab, htmltools::HTML)
+
+    rl <- ci$rail
+    rl$lab <- ifelse(is.na(rl$owner) | !nzchar(rl$owner), "Rail track",
+                     paste("Rail track &middot;", rl$owner))
+    rl$lab <- lapply(rl$lab, htmltools::HTML)
+
+    av <- ci$avi
+
+    prox <- leafletProxy("map") |>
+      clearGroup(unname(infra_groups))
+    prox <- add_line_layer(prox, rd[rd$fclass == 2, ], infra_groups[["Road"]],
+                           sty$road, weight = 1.4)
+    prox <- add_line_layer(prox, rd[rd$fclass == 1, ], infra_groups[["Road"]],
+                           sty$road, weight = 2.4)
+    prox <- add_line_layer(prox, rl, infra_groups[["Rail"]], sty$rail,
+                           weight = 1.8, dash = "5,5")
+    if (nrow(av))
+      # Towered airports get the larger marker. The map should not imply that a
+      # municipal strip and O'Hare put the same aviation exposure on a
+      # neighborhood, and a control tower is the coarse but honest proxy for
+      # operations that ships with the FAA record.
+      prox <- prox |>
+        addCircleMarkers(
+          data = av, group = infra_groups[["Aviation"]],
+          radius = ifelse(av$towered, 7, 4.5), stroke = TRUE,
+          color = "#123", weight = 1.2, opacity = 0.9,
+          fillColor = avi_col, fillOpacity = 0.85,
+          label = lapply(sprintf("<b>%s</b> (%s)%s", av$name, av$id,
+                                 ifelse(av$towered, "", " &middot; no control tower")),
+                         htmltools::HTML),
+          options = pathOptions(pane = "infra"))
+
+    # Applied here as well as in the sector observer below: the layers are added
+    # visible, so a city change would otherwise leave all three on at once.
+    apply_infra_vis(prox, isolate(input$sector))
+  })
+
+  # Sector change moves the overlay with it. This resets a manual toggle, which
+  # is the deliberate tradeoff: the reader can always turn a layer back on, and
+  # the alternative (remembering per-layer state across sector changes) makes
+  # the map open in a state the selector does not explain.
+  observeEvent(input$sector, {
+    apply_infra_vis(leafletProxy("map"), input$sector)
+  }, ignoreInit = TRUE)
+
+  # Sample and method, stated where the plots are. Written to be read by someone
+  # deciding how much to trust the panel, so it leads with the population and
+  # the two choices that most shape what the chart shows (zeros held out,
+  # sectors indexed), and it names the confound the chart does NOT remove rather
+  # than leaving a reader to assume it has been handled.
+  output$method_note <- renderUI({
+    grp <- if (input$eby == "grade") "HOLC grade"
+           else sprintf("%s quintile (breaks pooled across all zones)",
+                        eby_label())
+    tagList(
+      p(HTML(sprintf(paste(
+        "<b>Sample.</b> All %s HOLC-graded zones across %d cities in %d",
+        "states, the full study frame. Grouped by %s."),
+        format(nrow(frame), big.mark = ","), frame_cities, frame_states,
+        grp))),
+      p(HTML(paste(
+        "<b>Method.</b> Exposure is modeled emissions (NEMO, EPA NEI 2017) and",
+        "modeled noise (BTS); demographics are ACS 2019. Zones with no",
+        "measurable exposure are held out of the lines and reported separately",
+        "as the grey % &mdash; an absence is not a low value, and pooling the",
+        "two inflates the rail-noise D:A gradient from 3.0&times; to",
+        "19.3&times;. Each sector is divided by the median of its own leftmost",
+        "group so the three are comparable: absolute levels differ by five",
+        "orders of magnitude (median road NO is 2.6e5 against aviation's 3.0),",
+        "which no shared axis can show. Lines are group medians, bars the",
+        "interquartile range; the log axis is clipped to that range, but every",
+        "median and quartile is computed on all data."))),
+      p(HTML(paste(
+        "<b>Read with care.</b> Descriptive only, no controls and no causal",
+        "claim. Quintile breaks are pooled across cities, so a demographic",
+        "gradient partly reflects which cities sit at the top of the",
+        "distribution rather than differences within them; the HOLC grade",
+        "grouping is the one that holds up when zones are compared only",
+        "against others in the same city. No combined exposure index."))))
+  })
+
+  # ---- equity chart: the three sectors side by side, each indexed to its own
+  #      baseline group, so their gradients can be compared directly ----------
+  #
+  # Why indexed rather than in real units: median road NO is 2.6e5 and median
+  # aviation NO is 3.0, five orders apart. On a shared axis two of the three
+  # panels flatten to a line; on free axes steepness is no longer comparable,
+  # which is the only thing this chart is for. Dividing each sector by the
+  # median of its own leftmost group puts every panel's baseline at 1.0 and
+  # makes the height of the last group that sector's disparity ratio, readable
+  # against the other two. Levels are deliberately discarded -- the map carries
+  # level, this carries inequality.
+  #
+  # Why a median line and not box plots: within-group spread is roughly six
+  # times the between-group shift (rail noise grade A alone runs 0.18-2.39 IQR
+  # against a D:A shift of 2.0x), so boxes overlap almost completely and bury
+  # the staircase they are supposed to show. Thin IQR bars keep the spread
+  # visible as context; the bold line carries the signal.
   output$equity <- renderPlot({
     req(input$city)
     eb  <- input$eby
-    nat <- merge(exp_sel(), zattr, by = "HOLCID")
+    # frame, not zattr: the distribution behind the chart is every graded zone
+    # in the study, and the city overlay below is the subset currently mapped
+    nat <- merge(exp_poll(), frame, by = "HOLCID")
     # guard before the quantile binning below, which fails obscurely ("invalid
     # number of intervals") rather than usefully on an empty slice
-    validate(need(nrow(nat) > 0,
-                  "No exposure data for this sector and pollutant."))
+    validate(need(nrow(nat) > 0, "No exposure data for this pollutant."))
     city <- merge(st_drop_geometry(city_zones())["HOLCID"], nat, by = "HOLCID")
 
     if (eb == "grade") {
       nat$bin  <- factor(nat$grade, levels = grade_levels)
       city$bin <- factor(city$grade, levels = grade_levels)
-      fills <- grade_cols
       xlab  <- "HOLC grade (A = 'best' ... D = 'hazardous')"
+      base_lab <- "grade A"
     } else {
-      # national quintile breaks; apply the SAME breaks to the city overlay
+      # quintile breaks are pooled across all sectors and cities, and the SAME
+      # breaks bin the city overlay -- otherwise "Q5" would mean a different
+      # income in the overlay than in the distribution behind it
       br <- unique(quantile(nat[[eb]], probs = seq(0, 1, 0.2), na.rm = TRUE))
       labs_q <- paste0("Q", seq_len(length(br) - 1))
       binq <- function(v) cut(v, breaks = br, include.lowest = TRUE, labels = labs_q)
       nat$bin  <- binq(nat[[eb]])
       city$bin <- binq(city[[eb]])
-      fills <- setNames(q_ramp(length(labs_q)), labs_q)
       xlab  <- sprintf("%s quintile (Q1 = lowest, Q5 = highest)", eby_label())
+      base_lab <- labs_q[1]
     }
+    nat$sector  <- factor(nat$sector, levels = names(infra_groups))
+    city$sector <- factor(city$sector, levels = names(infra_groups))
 
     # Presence and intensity are separate disparities and pooling them distorts
     # both. A zone with no measurable exposure is not a low-exposure zone, and
     # the zero share is itself steeply graded (rail noise: 36.5% of grade-A
-    # zones vs 13.8% of grade-D). Pooling drags grade A toward the floor and
-    # inflates the rail-noise D:A ratio from 3.1x to 19.3x. So: boxes show
-    # intensity among zones that have exposure, labels show the share with none.
-    zero_tab <- aggregate(list(pct_zero = nat$xp == 0), list(bin = nat$bin), mean)
+    # zones vs 13.8% of grade-D). Pooling drags the baseline group toward the
+    # floor and inflates the rail-noise D:A ratio from 3.1x to 19.3x. So: the
+    # line shows intensity among zones that have exposure, labels show the
+    # share with none.
+    zero_tab <- aggregate(list(pct_zero = nat$xp == 0),
+                          list(bin = nat$bin, sector = nat$sector), mean)
     nat  <- nat[!is.na(nat$xp) & nat$xp > 0, ]
     city <- city[!is.na(city$xp) & city$xp > 0, ]
     validate(need(nrow(nat) > 0,
-                  "No zone in this view has measurable exposure for this sector and pollutant."))
+                  "No zone in this view has measurable exposure for this pollutant."))
 
-    # reserve a strip beneath the boxes for the zero-share labels
-    y_rng <- range(nat$logxp, na.rm = TRUE)
-    y_lab <- y_rng[1] - 0.11 * max(diff(y_rng), 1e-6)
+    # Index within sector to the median of its baseline group. A sector whose
+    # baseline group has no zones with exposure falls back to its own overall
+    # median, which keeps the panel drawable; its baseline then is not 1.0, and
+    # the reference line makes that visible rather than hiding it.
+    base_med <- sapply(levels(nat$sector), function(s) {
+      v <- nat$xp[nat$sector == s & nat$bin == levels(nat$bin)[1]]
+      m <- median(v, na.rm = TRUE)
+      if (!is.finite(m) || m <= 0) median(nat$xp[nat$sector == s], na.rm = TRUE) else m
+    })
+    nat$rel  <- nat$xp  / base_med[as.character(nat$sector)]
+    city$rel <- city$xp / base_med[as.character(city$sector)]
 
-    ggplot(nat, aes(x = bin, y = logxp)) +
-      geom_boxplot(aes(fill = bin), outlier.size = 0.5, width = 0.6,
-                   alpha = 0.85, colour = "grey30") +
-      geom_jitter(data = city, width = 0.15, height = 0, size = 1.6,
-                  colour = "#111111", alpha = 0.8) +
+    # Axis limits come from the IQR envelope, not the raw range: aviation NO
+    # carries a rel value of 5.7e6, which would compress all three panels into a
+    # hairline. coord_cartesian zooms rather than filters, so every median and
+    # quartile below is still computed on the full data.
+    qs  <- unlist(lapply(split(nat$rel, list(nat$sector, nat$bin), drop = TRUE),
+                         quantile, probs = c(.25, .75), na.rm = TRUE))
+    ylo <- max(min(qs, na.rm = TRUE) * 0.7, 1e-3)
+    yhi <- max(qs, na.rm = TRUE) * 1.4
+    y_lab <- ylo * 0.75   # zero-share label strip, below the bars
+
+    ggplot(nat, aes(x = bin, y = rel)) +
+      # the panel the map is currently drawing, tinted so the Emission Source
+      # selector still visibly relates to this chart without driving it
+      geom_rect(data = data.frame(sector = factor(input$sector,
+                                                  levels = levels(nat$sector))),
+                inherit.aes = FALSE, xmin = -Inf, xmax = Inf,
+                ymin = -Inf, ymax = Inf, fill = "#fff8e1", alpha = 0.55) +
+      geom_hline(yintercept = 1, linetype = "dashed", colour = "grey55",
+                 linewidth = 0.4) +
+      geom_jitter(data = city, width = 0.14, height = 0, size = 1,
+                  colour = "#111111", alpha = 0.35) +
+      stat_summary(fun.min = function(v) quantile(v, .25),
+                   fun.max = function(v) quantile(v, .75),
+                   geom = "linerange", colour = "grey45", linewidth = 0.7,
+                   alpha = 0.85) +
+      stat_summary(fun = median, geom = "line", group = 1,
+                   colour = "#2c3e50", linewidth = 1.1) +
+      stat_summary(fun = median, geom = "point", aes(fill = bin),
+                   shape = 21, size = 3.1, colour = "#2c3e50", stroke = 0.9) +
       geom_text(data = zero_tab, inherit.aes = FALSE,
                 aes(x = bin, y = y_lab,
-                    label = sprintf("%.0f%% none", 100 * pct_zero)),
-                size = 3.1, colour = "grey35") +
-      scale_fill_manual(values = fills, guide = "none", drop = FALSE) +
+                    label = sprintf("%.0f%%", 100 * pct_zero)),
+                size = 2.9, colour = "grey35") +
+      scale_fill_manual(values = if (eb == "grade") grade_cols else
+                          setNames(q_ramp(nlevels(nat$bin)), levels(nat$bin)),
+                        guide = "none", drop = FALSE) +
       scale_x_discrete(drop = FALSE) +
-      expand_limits(y = y_lab - 0.06 * max(diff(y_rng), 1e-6)) +
-      labs(x = xlab, y = "log(exposure + 1), zones with exposure",
-           # city goes on its own line -- appended inline it clips at the panel edge
+      scale_y_log10() +
+      coord_cartesian(ylim = c(y_lab * 0.85, yhi)) +
+      facet_wrap(~ sector, nrow = 1) +
+      labs(x = xlab,
+           y = sprintf("Exposure relative to %s", base_lab),
            subtitle = paste0(
-             "Boxes: intensity among zones with measurable exposure. ",
-             "Labels: share with none.",
-             sprintf("\nPoints: %s.", input$city))) +
+             sprintf("Each sector indexed to its own %s median (dashed line). ",
+                     base_lab),
+             "Line: median among zones with exposure. Bars: IQR. ",
+             "Grey %: share with none.",
+             sprintf("\nPoints: %s. Log axis, clipped to the IQR envelope.",
+                     input$city))) +
       theme_minimal(base_size = 13) +
-      theme(panel.grid.major.x = element_blank())
+      theme(panel.grid.major.x = element_blank(),
+            strip.text = element_text(face = "bold", size = 12),
+            plot.subtitle = element_text(size = 9.5, colour = "grey30"))
   })
 }
 
