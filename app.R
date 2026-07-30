@@ -114,7 +114,7 @@ grade_idx_max <- local({
 })
 
 # National color-ramp domain, one per sector x pollutant, for the map's
-# "All cities" scale. Pooled over zones AND tracts for the same reason the
+# National scale. Pooled over zones AND tracts for the same reason the
 # per-city domain is: comb.R makes a zone's xp the area-weighted mean of the
 # tracts under it, so they are one quantity at two resolutions.
 #
@@ -244,17 +244,26 @@ tiles_for <- function(map, which) {
 # the first by construction rather than by copied CSS that can drift. The input
 # id rides on the wrapper as a data attribute and the JS reads it from there, so
 # adding a control is this call plus an addControl -- no new JS.
-map_seg_control <- function(input_id, choices, sel, default, titles = NULL) {
+# `header` is optional because the two controls need it unequally: Light /
+# Satellite says what it does, but Within City / National names a population
+# without naming what is being scaled by it, and on the map there is no sidebar
+# label nearby to supply that.
+map_seg_control <- function(input_id, choices, sel, default, titles = NULL,
+                            header = NULL) {
   if (is.null(sel)) sel <- default
   tags$div(
     class = "mapseg", `data-input` = input_id,
-    lapply(seq_along(choices), function(i) {
-      v <- unname(choices)[i]
-      tags$button(type = "button", `data-val` = v,
-                  title = if (!is.null(titles)) titles[i],
-                  class = paste("mapseg-btn", if (identical(v, sel)) "active"),
-                  names(choices)[i])
-    })
+    if (!is.null(header)) tags$div(class = "mapseg-head", header),
+    tags$div(
+      class = "mapseg-btns",
+      lapply(seq_along(choices), function(i) {
+        v <- unname(choices)[i]
+        tags$button(type = "button", `data-val` = v,
+                    title = if (!is.null(titles)) titles[i],
+                    class = paste("mapseg-btn", if (identical(v, sel)) "active"),
+                    names(choices)[i])
+      })
+    )
   )
 }
 
@@ -264,11 +273,12 @@ basemap_control <- function(sel) map_seg_control("basemap", basemaps, sel, "ligh
 # colors on the map MEAN, and the same argument that put the basemap switch here
 # applies with more force: a reader comparing two cities is looking at the map,
 # not the sidebar. Same builder as the basemap switch, so the two read as one
-# family of map controls. The buttons carry titles because "This city" and
-# "All cities" name the population without naming what is being scaled.
-scale_choices <- c("This city" = "city", "All cities" = "national")
+# family of map controls. It carries a header because "Within City" and
+# "National" name the population without naming what is being scaled by it, and
+# the buttons carry titles because the header cannot hold the whole tradeoff.
+scale_choices <- c("Within City" = "city", "National" = "national")
 scale_control <- function(sel) map_seg_control(
-  "scale", scale_choices, sel, "city",
+  "scale", scale_choices, sel, "city", header = "Exposure Scaling",
   titles = c("Fit the color ramp to this city's own range: shows the spread inside the city, colors not comparable between cities",
              "Fit the color ramp to the national range for this source and exposure: colors comparable between cities"))
 
@@ -708,11 +718,11 @@ ui <- page_sidebar(
       helpText(
         HTML(paste(
           "Each polygon is shaded by modeled exposure on a log scale, darker",
-          "meaning higher. The <b>color scale</b> switch on the map chooses what",
-          "the shading is relative to.",
-          "<b>This city</b> fits the ramp to the selected city's",
+          "meaning higher. The <b>Exposure Scaling</b> switch on the map chooses",
+          "what the shading is relative to.",
+          "<b>Within City</b> fits the ramp to the selected city's",
           "own range, which shows the spread inside the city but makes colors",
-          "meaningless between cities. <b>All cities</b> fits it to the national",
+          "meaningless between cities. <b>National</b> fits it to the national",
           "range for the selected source and exposure, so two cities can be",
           "compared directly, at the cost of a low-exposure city reading as",
           "almost uniformly pale, which is the honest answer at that scale. The",
@@ -974,7 +984,12 @@ ui <- page_sidebar(
      .mapseg-wrap { background: #fff; border-radius: 5px; padding: 5px;
                     box-shadow: 0 1px 5px rgba(0,0,0,.4);
                     margin-bottom: 6px !important; }
-     .mapseg { display: flex; gap: 3px; }
+     .mapseg-btns { display: flex; gap: 3px; }
+     /* Sits tight above its buttons and reads as a caption, not a third
+        button: smaller, uppercase, tracked out, and no hover state. */
+     .mapseg-head { font-size: .6rem; font-weight: 700; letter-spacing: .04em;
+                    text-transform: uppercase; color: #6c757d;
+                    margin: 0 0 3px 1px; line-height: 1.2; }
      .mapseg-btn { border: 0; border-radius: 3px; cursor: pointer;
                padding: .18rem .5rem; font-size: .72rem; font-weight: 600;
                line-height: 1.45; color: #495057; background: #eef0f2;
