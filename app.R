@@ -244,10 +244,9 @@ tiles_for <- function(map, which) {
 # the first by construction rather than by copied CSS that can drift. The input
 # id rides on the wrapper as a data attribute and the JS reads it from there, so
 # adding a control is this call plus an addControl -- no new JS.
-# `header` is optional because the two controls need it unequally: Light /
-# Satellite says what it does, but Within City / National names a population
-# without naming what is being scaled by it, and on the map there is no sidebar
-# label nearby to supply that.
+# Every control in the top-right stack carries a header, including leaflet's own
+# layers control, which gets one through CSS since it has no slot for it. Three
+# boxes with no captions read as an undifferentiated pile of buttons.
 map_seg_control <- function(input_id, choices, sel, default, titles = NULL,
                             header = NULL) {
   if (is.null(sel)) sel <- default
@@ -267,16 +266,17 @@ map_seg_control <- function(input_id, choices, sel, default, titles = NULL,
   )
 }
 
-basemap_control <- function(sel) map_seg_control("basemap", basemaps, sel, "light")
+basemap_control <- function(sel) map_seg_control("basemap", basemaps, sel, "light",
+                                                 header = "Background")
 
 # Color scale. On the map rather than in the sidebar because it changes what the
 # colors on the map MEAN, and the same argument that put the basemap switch here
 # applies with more force: a reader comparing two cities is looking at the map,
 # not the sidebar. Same builder as the basemap switch, so the two read as one
-# family of map controls. It carries a header because "Within City" and
-# "National" name the population without naming what is being scaled by it, and
-# the buttons carry titles because the header cannot hold the whole tradeoff.
-scale_choices <- c("Within City" = "city", "National" = "national")
+# family of map controls. The header is what names the quantity, since "This
+# City" and "Full Sample" name only the population; the buttons carry titles
+# because the header cannot hold the whole tradeoff.
+scale_choices <- c("This City" = "city", "Full Sample" = "national")
 scale_control <- function(sel) map_seg_control(
   "scale", scale_choices, sel, "city", header = "Exposure Scaling",
   titles = c("Fit the color ramp to this city's own range: shows the spread inside the city, colors not comparable between cities",
@@ -420,8 +420,9 @@ city_choices <- setNames(cities$place, cities$place)
 # nested underneath it in the same box, above a rule that marks it as a separate
 # reading rather than another step on the scale.
 #
-# The bar is a CSS gradient sampled from the palette, drawn bottom-to-top so the
-# high end sits at the top the way leaflet's own vertical legend reads. Ticks
+# The bar is a CSS gradient sampled from the palette, drawn left-to-right with
+# the ticks under it. Horizontal rather than leaflet's usual vertical form
+# because vertical made the box tall and mostly empty; see the .lg CSS. Ticks
 # are positioned as percentages of the domain rather than spaced evenly, so a
 # domain whose pretty() breaks are not evenly spread still labels honestly.
 #
@@ -439,30 +440,50 @@ exposure_key <- function(p, rng, has_zero, national = FALSE) {
                     zero_row))
   stops <- if (rng[1] == rng[2]) rep(rng[1], 2) else seq(rng[1], rng[2], length.out = 12)
   grad  <- paste(p(stops), collapse = ", ")
-  ticks <- pretty(rng, n = 3)
-  ticks <- ticks[ticks >= rng[1] & ticks <= rng[2]]
-  if (length(ticks) < 2) ticks <- rng
+  if (rng[1] == rng[2]) {
+    # One distinct value in the whole city (Fall River rail noise). A scale of
+    # repeated identical labels is not a scale; one centred tick is the truth.
+    ticks <- rng[1]
+  } else {
+    ticks <- pretty(rng, n = 3)
+    ticks <- ticks[ticks >= rng[1] & ticks <= rng[2]]
+    if (length(ticks) < 2) ticks <- rng
+    # pretty() can return six on a narrow domain, which crowds a box this wide.
+    if (length(ticks) > 4)
+      ticks <- ticks[unique(round(seq(1, length(ticks), length.out = 4)))]
+  }
   pct <- if (rng[2] > rng[1]) 100 * (ticks - rng[1]) / (rng[2] - rng[1])
          else rep(50, length(ticks))
+  # Enough decimals that no two labels read the same. A city whose zones all sit
+  # within a fraction of a log unit otherwise prints "1.0" three times over, and
+  # the ticks stop being a scale while still taking the space of one.
+  dig <- 1
+  while (dig < 4 && anyDuplicated(sprintf(paste0("%.", dig, "f"), ticks))) dig <- dig + 1
+  tick_lab <- sprintf(paste0("%.", dig, "f"), ticks)
+  # A label centred on a tick at 0% or 100% hangs half of itself off the box, so
+  # the two ends are aligned inward instead of centred.
+  shift <- ifelse(pct <= 2, "0", ifelse(pct >= 98, "-100%", "-50%"))
 
   tags$div(
     class = "lg",
+    div(class = "lg-title", "Exposure"),
     # The basis line is the whole reason the two scales can coexist: the same
     # ramp means two different things depending on it, so the key has to say
     # which. Under the national scale it also flags the clipped ends, because
     # the top color is "at or past the 98th percentile", not "the maximum".
-    div(class = "lg-title", HTML(paste0(
-      "Exposure<br/><small>log(xp+1), ",
-      if (national) "national scale, ends clipped at 2nd/98th pct"
-      else "scaled within city",
-      "<br/>zones and tracts on one scale</small>"))),
-    div(class = "lg-ramp",
-        div(class = "lg-bar",
-            style = sprintf("background:linear-gradient(to top, %s);", grad)),
-        div(class = "lg-ticks",
-            lapply(seq_along(ticks), function(i)
-              span(class = "lg-tick", style = sprintf("bottom:%.1f%%;", pct[i]),
-                   sprintf("%.1f", ticks[i]))))),
+    # One line of three clauses rather than three stacked lines -- it was the
+    # tallest part of the key and it is a caption, not a paragraph.
+    div(class = "lg-sub",
+        sprintf("log(xp+1) · %s · zones + tracts",
+                if (national) "national, 2nd-98th pct" else "within city")),
+    div(class = "lg-bar",
+        style = sprintf("background:linear-gradient(to right, %s);", grad)),
+    div(class = "lg-ticks",
+        lapply(seq_along(ticks), function(i)
+          span(class = "lg-tick",
+               style = sprintf("left:%.1f%%; transform:translateX(%s);",
+                               pct[i], shift[i]),
+               tick_lab[i]))),
     zero_row
   )
 }
@@ -720,9 +741,9 @@ ui <- page_sidebar(
           "Each polygon is shaded by modeled exposure on a log scale, darker",
           "meaning higher. The <b>Exposure Scaling</b> switch on the map chooses",
           "what the shading is relative to.",
-          "<b>Within City</b> fits the ramp to the selected city's",
+          "<b>This City</b> fits the ramp to the selected city's",
           "own range, which shows the spread inside the city but makes colors",
-          "meaningless between cities. <b>National</b> fits it to the national",
+          "meaningless between cities. <b>Full Sample</b> fits it to the national",
           "range for the selected source and exposure, so two cities can be",
           "compared directly, at the cost of a low-exposure city reading as",
           "almost uniformly pale, which is the honest answer at that scale. The",
@@ -985,11 +1006,20 @@ ui <- page_sidebar(
                     box-shadow: 0 1px 5px rgba(0,0,0,.4);
                     margin-bottom: 6px !important; }
      .mapseg-btns { display: flex; gap: 3px; }
-     /* Sits tight above its buttons and reads as a caption, not a third
-        button: smaller, uppercase, tracked out, and no hover state. */
-     .mapseg-head { font-size: .6rem; font-weight: 700; letter-spacing: .04em;
+     /* Caption, not a third button: smaller, uppercase, tracked out, no hover.
+        Leaflet's layers control has no slot for a header, so it gets the same
+        one through ::before -- one rule so the three boxes in the stack cannot
+        drift apart. The content string is the only per-control part. */
+     .mapseg-head,
+     .leaflet-control-layers-list::before {
+                    display: block;
+                    font-size: .6rem; font-weight: 700; letter-spacing: .04em;
                     text-transform: uppercase; color: #6c757d;
                     margin: 0 0 3px 1px; line-height: 1.2; }
+     /* Single quotes: this whole block is an R double-quoted string, so a
+        double quote here ends it and the file stops parsing. Same trap as the
+        attribute selectors in the banner CSS. */
+     .leaflet-control-layers-list::before { content: 'Layers'; }
      .mapseg-btn { border: 0; border-radius: 3px; cursor: pointer;
                padding: .18rem .5rem; font-size: .72rem; font-weight: 600;
                line-height: 1.45; color: #495057; background: #eef0f2;
@@ -1036,20 +1066,25 @@ ui <- page_sidebar(
         under a rule because it is a different kind of statement from the scale
         above it -- an absence, not a value on it -- and the rule is what stops
         it reading as the bottom step of the ramp. */
-     .lg-title { font-weight: 700; font-size: .78rem; line-height: 1.25;
-                 margin-bottom: .35rem; }
-     .lg-title small { font-weight: 400; opacity: .75; font-size: .68rem; }
-     .lg-ramp { display: flex; align-items: stretch; gap: .4rem; height: 5.5rem; }
-     .lg-bar { width: 1.1rem; flex: 0 0 auto; border-radius: 2px;
+     /* Horizontal ramp. The vertical form spent 5.5rem on a 1.1rem-wide bar
+        beside a tick column that held three short labels and was otherwise
+        empty, and the box had to be wide enough for the caption anyway -- so
+        the width was already paid for and the height was mostly air. Laid on
+        its side the ramp costs about 1.4rem instead, and the caption's width
+        sets the bar's length rather than fighting it. */
+     .lg { max-width: 12rem; min-width: 9.5rem; }
+     .lg-title { font-weight: 700; font-size: .74rem; line-height: 1.2; }
+     .lg-sub { font-weight: 400; opacity: .75; font-size: .63rem;
+               line-height: 1.3; margin-bottom: .3rem; }
+     .lg-bar { height: .55rem; border-radius: 2px;
                border: 1px solid rgba(0,0,0,.2); }
-     .lg-ticks { position: relative; flex: 1 1 auto; min-width: 2.2rem; }
-     .lg-tick { position: absolute; left: 0; transform: translateY(50%);
-                font-size: .68rem; line-height: 1;
-                font-variant-numeric: tabular-nums; }
-     .lg-zero { display: flex; align-items: center; gap: .4rem;
-                margin-top: .45rem; padding-top: .4rem;
-                border-top: 1px solid rgba(0,0,0,.15); font-size: .7rem; }
-     .lg-sw { width: 1.1rem; height: .8rem; flex: 0 0 auto; border-radius: 2px;
+     .lg-ticks { position: relative; height: .8rem; margin-top: .15rem; }
+     .lg-tick { position: absolute; top: 0; font-size: .63rem; line-height: 1;
+                white-space: nowrap; font-variant-numeric: tabular-nums; }
+     .lg-zero { display: flex; align-items: center; gap: .35rem;
+                margin-top: .3rem; padding-top: .3rem;
+                border-top: 1px solid rgba(0,0,0,.15); font-size: .66rem; }
+     .lg-sw { width: 1rem; height: .7rem; flex: 0 0 auto; border-radius: 2px;
               border: 1px solid rgba(0,0,0,.2); display: inline-block; }
      /* Per-city cards. One number each, sized between the grade-count numerals
         and a value_box headline, so the three stacked cards read as one family
