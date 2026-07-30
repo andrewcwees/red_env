@@ -194,6 +194,37 @@ tiles_for <- function(map, which) {
     map |> addProviderTiles(providers$CartoDB.Positron, group = "basemap")
 }
 
+# The basemap switch lives on the map, beside the layer selectors, rather than
+# in the sidebar: it changes what the map looks like, so it belongs where the
+# reader is looking when they want it.
+#
+# It cannot be a second `addLayersControl`. Leaflet's binding allows exactly
+# one ("Only allow one layers control at a time" -- it calls removeLayersControl
+# before adding), and that one is already spent on the three mutually exclusive
+# fills, which cannot become checkboxes without letting two choropleths stack.
+# So this is hand-rolled and pushed through `addControl`, the same route
+# `exposure_key()` takes for the same class of reason.
+#
+# It writes `input$basemap` directly, so every existing reader of that input
+# keeps working untouched: the tile-swap observer, the polygon border colors,
+# and the infrastructure line styling.
+#
+# Re-added on every draw rather than once at init, because the draw observer
+# calls clearControls() and would otherwise wipe it. That is also what keeps
+# the active button in step with the input.
+basemap_control <- function(sel) {
+  if (is.null(sel)) sel <- "light"
+  tags$div(
+    class = "bm-ctl",
+    lapply(seq_along(basemaps), function(i) {
+      v <- unname(basemaps)[i]
+      tags$button(type = "button", `data-bm` = v,
+                  class = paste("bm-btn", if (identical(v, sel)) "active"),
+                  names(basemaps)[i])
+    })
+  )
+}
+
 # Infrastructure overlay. One group per sector, named for what is drawn rather
 # than for the sector, because that is what the reader sees on the map. The
 # group shown by default follows the Emission Source selector: picking Rail and
@@ -517,11 +548,14 @@ ui <- page_sidebar(
     # client-side, and on the very first paint input.view may not have arrived
     # yet. Without it the map's own controls and figures would be hidden on the
     # view they belong to. Hidden inputs stay in the DOM, so the draw observers
-    # keep reading basemap and opacity while the reader is on the other tab.
+    # keep reading the opacity while the reader is on the other tab.
+    #
+    # The basemap switch is NOT here. It sits on the map beside the layer
+    # selectors (see basemap_control), so `input$basemap` has no sidebar widget
+    # behind it and is NULL until the reader touches it -- every read of it
+    # treats NULL as "light", which is what renderLeaflet draws.
     conditionalPanel(
       condition = "input.view === 'map' || input.view === undefined",
-      radioButtons("basemap", "Basemap", choices = basemaps,
-                   selected = "light", inline = TRUE),
       # Satellite is unreadable under an opaque choropleth, so the fill has to be
       # dimmable for the imagery to be worth switching to at all.
       sliderInput("fillop", "Fill opacity", min = 0.2, max = 1, value = 0.8,
@@ -572,8 +606,9 @@ ui <- page_sidebar(
         "The same control turns the highway, rail, and airport layers on and",
         "off; the one matching the source you picked is drawn by default and",
         "follows the selector.",
-        "Switch the basemap to Satellite and turn the fill opacity down to see",
-        "the infrastructure on the ground beneath."
+        "Switch the basemap to Satellite, top-right above the layer control,",
+        "and turn the fill opacity down to see the infrastructure on the",
+        "ground beneath."
       )
     ),
     conditionalPanel(
@@ -794,14 +829,30 @@ ui <- page_sidebar(
      /* The empty .tabbable leaves the nav's line height behind once the list is
         gone; the panels start at the top of the content area instead. */
      .tabbable > .tab-content { margin-top: 0; }
-     /* Segmented radio groups (Source, Type), stacked vertically. Same track
-        and same blue active fill as the view switch above, so the two read as
-        one control vocabulary. No sliding thumb here: the active segment is
-        painted straight off :checked, an adjacent-sibling match that needs no
-        :has() and so no @supports fallback.
+     /* Segmented radio groups (Source, Type). No enclosing track: the buttons
+        carry their own fill, offset from the sidebar rather than sitting in a
+        tinted well. The sidebar is rgba(0,0,0,.05) over white, so an unselected
+        button reads by being lighter than what is behind it and the selected
+        one by the same blue the view switch uses. The active segment is painted
+        straight off :checked, an adjacent-sibling match that needs no :has()
+        and so no @supports fallback.
         Markup is div.radio > label > (input + span) -- see seg_radio(). The
         span next to the input is the segment surface; the label is only a
         click target, which is why it carries no padding of its own. */
+     /* Basemap switch, drawn on the map above the layer selectors. Matches the
+        layers control's own frame (white, 5px radius, the same drop shadow) so
+        the two read as one stack of map controls rather than a stray widget. */
+     .bm-ctl-wrap { background: #fff; border-radius: 5px; padding: 5px;
+                    box-shadow: 0 1px 5px rgba(0,0,0,.4);
+                    margin-bottom: 6px !important; }
+     .bm-ctl { display: flex; gap: 3px; }
+     .bm-btn { border: 0; border-radius: 3px; cursor: pointer;
+               padding: .18rem .5rem; font-size: .72rem; font-weight: 600;
+               line-height: 1.45; color: #495057; background: #eef0f2;
+               transition: background-color .15s ease, color .15s ease; }
+     .bm-btn:hover { background: #e0e4e8; color: #1d2124; }
+     .bm-btn.active { background: #2780e3; color: #fff; }
+     .bm-btn:focus-visible { outline: 2px solid #1a5fa8; outline-offset: 1px; }
      /* T-chart: the two axes side by side, equal columns so neither reads as
         the primary one. min-width:0 or a long label pushes its column wider
         than its half. */
@@ -811,9 +862,7 @@ ui <- page_sidebar(
      .seg-input .control-label { margin-bottom: .3rem; font-weight: 600;
                                  font-size: .8rem; }
      .seg-input .shiny-options-group { display: flex; flex-direction: column;
-                                       gap: 2px; padding: 3px;
-                                       background: #dfe1e0; border-radius: 999px;
-                                       box-shadow: inset 0 1px 2px rgba(0,0,0,.13); }
+                                       gap: 4px; }
      .seg-input .radio { position: relative; margin: 0; padding: 0;
                          min-width: 0; }
      .seg-input .radio > label { display: block; width: 100%; margin: 0;
@@ -827,11 +876,11 @@ ui <- page_sidebar(
                                       padding: .28rem .8rem; border-radius: 999px;
                                       font-size: .8rem; line-height: 1.4;
                                       font-weight: 600; letter-spacing: .01em;
-                                      color: #495057;
+                                      color: #495057; background: #ffffff;
                                       transition: background-color .18s ease,
                                                   color .18s ease; }
      .seg-input .radio > label:hover input:not(:checked) + span { color: #1d2124;
-                                       background: rgba(255,255,255,.55); }
+                                       background: #e9edf1; }
      .seg-input .radio input:checked + span { background: #2780e3;
                                        color: #ffffff;
                                        box-shadow: 0 1px 3px rgba(0,0,0,.28); }
@@ -1334,7 +1383,41 @@ server <- function(input, output, session) {
             apply(c ? c.parentNode.textContent.trim() : '%s');
           }).observe(el, { childList: true, subtree: true });
         }
-      ", fill_groups[["grade"]], fill_groups[["zone_exp"]]))
+      ", fill_groups[["grade"]], fill_groups[["zone_exp"]])) |>
+      # Wiring for the hand-rolled basemap switch. The control is destroyed and
+      # rebuilt by every clearControls(), so this re-arms whenever it reappears,
+      # guarded by a data flag so one instance is wired once.
+      #
+      # disableClickPropagation is why the listener is bound to the control
+      # itself and not delegated from the map container: it stops the click at
+      # the control, so a listener further up would never see it. Without it a
+      # double click on a button reaches the map and zooms.
+      #
+      # The active class is set here as well as server-side. Server-side is what
+      # makes it correct; doing it locally too means the button responds on the
+      # click instead of after the redraw returns.
+      htmlwidgets::onRender("
+        function(el) {
+          function wire() {
+            var w = el.querySelector('.bm-ctl-wrap');
+            if (!w || w.dataset.wired) return;
+            w.dataset.wired = '1';
+            L.DomEvent.disableClickPropagation(w);
+            L.DomEvent.disableScrollPropagation(w);
+            w.addEventListener('click', function(e) {
+              var b = e.target.closest('.bm-btn');
+              if (!b) return;
+              w.querySelectorAll('.bm-btn').forEach(function(o) {
+                o.classList.remove('active');
+              });
+              b.classList.add('active');
+              Shiny.setInputValue('basemap', b.getAttribute('data-bm'));
+            });
+          }
+          wire();
+          new MutationObserver(wire).observe(el, { childList: true, subtree: true });
+        }
+      ")
   })
 
   # Basemap swap lives in its own observer so tile handling stays separable from
@@ -1444,6 +1527,10 @@ server <- function(input, output, session) {
       # together and the eye reads the unit before the variable; the default is
       # still the HOLC exposure fill, set by hiding the other two rather than by
       # list position.
+      # Added before the layers control so it sits above it in the corner, and
+      # re-added here because clearControls() above drops it with the legends.
+      addControl(basemap_control(input$basemap), position = "topright",
+                 className = "bm-ctl-wrap") |>
       addLayersControl(
         baseGroups = unname(fill_groups[c("grade", "zone_exp", "tract_exp")]),
         overlayGroups = unname(infra_groups),
