@@ -79,6 +79,12 @@ min_zones       <- 0
 road_fclass <- c(1, 2)  # HPMS functional class: 1 interstate, 2 other freeway
 infra_pad   <- 0.12     # city bbox padding (fraction of extent) for the clip
 infra_tol   <- 30       # line simplification tolerance, metres (EPSG:5070)
+# FRA NET codes kept in the rail overlay: M main sub network, O other track
+# (minor industrial leads), I major industrial lead, Y yard, S passing siding,
+# F rail ferry connection. Dropped: A abandoned, R abandoned and physically
+# removed, T trail on former right-of-way, X out of service. Definitions are the
+# NTAD data dictionary's own (doi 10.21949/1528950).
+rail_net    <- c("M", "O", "I", "Y", "S", "F")
 
 # No polygon simplification tolerance: zones and tracts both ship at full
 # resolution because independent per-feature simplification breaks shared
@@ -235,8 +241,13 @@ print(as.data.frame(rank))
 # the redlining-and-infrastructure literature. Attribute filtering happens in
 # the OGR query so the full file is never materialised in R.
 #
-# RAIL is kept whole (no class filter): yard and spur track is exactly what
-# generates rail exposure, so thinning to mainlines would misrepresent it.
+# RAIL keeps every class of track that carries traffic -- yard and spur is
+# exactly what generates rail exposure, so thinning to mainlines would
+# misrepresent it -- but drops the four NET codes that are not track a train
+# runs on: abandoned, physically removed, out of service, and trail on former
+# right-of-way. A rails-to-trails corridor is a bike path, and drawing it as
+# rail puts a non-source on a map whose whole subject is proximity to sources.
+# The class itself is carried through as `net` so the hover label can name it.
 #
 # AIRPORTS are public-use, operational airports (SITE_TYPE_CODE "A"), which
 # drops heliports, seaplane bases and private strips. This is a proximity cue,
@@ -330,15 +341,18 @@ road <- clip_to_cities(road[, c("name", "aadt", "fclass")])
 cat(sprintf("roads: %d segments across %d cities\n", nrow(road),
             length(unique(road$place))))
 
-# -- rail: all track in the bundle's states --
+# -- rail: operational track in the bundle's states --
 rail <- st_read(
   file.path(d_ntad, "NTAD_rail.geojson"), quiet = TRUE,
-  query = sprintf("SELECT RROWNER1 FROM \"NTAD_rail\" WHERE STATEAB IN (%s)",
-                  quote_in(bundle_states)))
+  query = sprintf(paste("SELECT RROWNER1, NET FROM \"NTAD_rail\"",
+                        "WHERE STATEAB IN (%s) AND NET IN (%s)"),
+                  quote_in(bundle_states), quote_in(rail_net)))
 rail$owner <- rail$RROWNER1
-rail <- clip_to_cities(rail[, "owner"])
+rail$net   <- rail$NET
+rail <- clip_to_cities(rail[, c("owner", "net")])
 cat(sprintf("rail: %d segments across %d cities\n", nrow(rail),
             length(unique(rail$place))))
+print(table(rail$net))
 
 # -- airports: public-use, operational, fixed-wing --
 avi <- st_read(

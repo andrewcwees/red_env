@@ -113,6 +113,33 @@ grade_idx_max <- local({
   max(m / m[, "A"], na.rm = TRUE)   # matrix / vector divides down each column
 })
 
+# National color-ramp domain, one per sector x pollutant, for the map's
+# "All cities" scale. Pooled over zones AND tracts for the same reason the
+# per-city domain is: comb.R makes a zone's xp the area-weighted mean of the
+# tracts under it, so they are one quantity at two resolutions.
+#
+# TRIMMED TO THE 2nd-98th PERCENTILE, and this is the whole reason the national
+# scale is usable. Exposure is enormously tail-heavy (aviation NO tops out near
+# 26M; the top 1% of tracts carries 92-99% of aviation mass), so an untrimmed
+# min-to-max domain spends nearly the entire palette on a handful of places and
+# renders everywhere else as one color -- the median city's middle 50% of
+# polygons occupies about 8% of the ramp for the road air pollutants. Trimming
+# roughly triples that. Values outside the domain are CLAMPED to the end colors
+# by fill_exposure rather than dropped, so a trimmed tail still reads as "at or
+# past the top of the scale" instead of falling through to the no-data fill.
+#
+# Computed here rather than baked in prep_data.R: it is one grouped pass over
+# ~370k rows at startup and needs no rebuild to change the trim.
+nat_trim   <- c(0.02, 0.98)
+nat_domain <- local({
+  v <- rbind(exp_frame[, c("sector", "pollutant", "xp")],
+             exp_tract[, c("sector", "pollutant", "xp")])
+  v <- v[!is.na(v$xp) & v$xp > 0, ]
+  q <- tapply(log1p(v$xp), paste(v$sector, v$pollutant),
+              function(x) unname(quantile(x, nat_trim)))
+  q
+})
+
 # Estimated zone population. The pipeline's pop_total is an area-weighted MEAN
 # of the intersecting tracts' totals (comb.R multiplies every numeric column by
 # a weight that sums to 1 within a zone), so it is not a headcount and is not
@@ -136,8 +163,9 @@ pollutants <- c("Noise (LAeq,24)"         = "Noise",
                 "Nitrogen Dioxide (NO₂)" = "NO2",
                 "Fine Particulate Matter (PM2.5)" = "PM25")
 poll_lab   <- c(Noise = "noise", NO = "NO", NO2 = "NO₂", PM25 = "PM2.5")
-# Segment labels for Type. Source and Type sit side by side as a T-chart, so
-# each column is about half the sidebar and there is no room for "Fine
+# Segment labels for Exposure. Source and Exposure sit side by side as a
+# T-chart, so each column is about half the sidebar and there is no room for
+# the spelled-out "Fine
 # Particulate Matter (PM2.5)". The segments carry the short forms the map and
 # chart headers already use, and the spelled-out names from `pollutants` ride
 # along as title tooltips, so the abbreviation is not the only place a reader
@@ -212,18 +240,37 @@ tiles_for <- function(map, which) {
 # Re-added on every draw rather than once at init, because the draw observer
 # calls clearControls() and would otherwise wipe it. That is also what keeps
 # the active button in step with the input.
-basemap_control <- function(sel) {
-  if (is.null(sel)) sel <- "light"
+# One builder for every on-map segmented control, so a second control matches
+# the first by construction rather than by copied CSS that can drift. The input
+# id rides on the wrapper as a data attribute and the JS reads it from there, so
+# adding a control is this call plus an addControl -- no new JS.
+map_seg_control <- function(input_id, choices, sel, default, titles = NULL) {
+  if (is.null(sel)) sel <- default
   tags$div(
-    class = "bm-ctl",
-    lapply(seq_along(basemaps), function(i) {
-      v <- unname(basemaps)[i]
-      tags$button(type = "button", `data-bm` = v,
-                  class = paste("bm-btn", if (identical(v, sel)) "active"),
-                  names(basemaps)[i])
+    class = "mapseg", `data-input` = input_id,
+    lapply(seq_along(choices), function(i) {
+      v <- unname(choices)[i]
+      tags$button(type = "button", `data-val` = v,
+                  title = if (!is.null(titles)) titles[i],
+                  class = paste("mapseg-btn", if (identical(v, sel)) "active"),
+                  names(choices)[i])
     })
   )
 }
+
+basemap_control <- function(sel) map_seg_control("basemap", basemaps, sel, "light")
+
+# Color scale. On the map rather than in the sidebar because it changes what the
+# colors on the map MEAN, and the same argument that put the basemap switch here
+# applies with more force: a reader comparing two cities is looking at the map,
+# not the sidebar. Same builder as the basemap switch, so the two read as one
+# family of map controls. The buttons carry titles because "This city" and
+# "All cities" name the population without naming what is being scaled.
+scale_choices <- c("This city" = "city", "All cities" = "national")
+scale_control <- function(sel) map_seg_control(
+  "scale", scale_choices, sel, "city",
+  titles = c("Fit the color ramp to this city's own range: shows the spread inside the city, colors not comparable between cities",
+             "Fit the color ramp to the national range for this source and exposure: colors comparable between cities"))
 
 # Infrastructure overlay. One group per sector, named for what is drawn rather
 # than for the sector, because that is what the reader sees on the map. The
@@ -231,6 +278,69 @@ basemap_control <- function(sel) {
 # seeing rail track is the whole point of the layer, and stacking all three at
 # once over a choropleth is unreadable.
 infra_groups <- c(Road = "Highways", Rail = "Rail lines", Aviation = "Airports")
+
+# What each drawn thing IS, for the hover labels.
+#
+# Highway class: the overlay already draws class 1 heavier than class 2, and the
+# app treats that distinction as meaningful everywhere else, so the label says
+# which one rather than leaving the reader to infer it from line weight.
+road_class <- c("1" = "Interstate", "2" = "Freeway or expressway")
+
+# Rail class from the FRA NET code, in a non-rail reader's vocabulary. The FRA
+# splits industrial lead into major (I) and minor (O); both collapse to
+# "Industrial track" here, because this is a portfolio piece and the major/minor
+# distinction is jargon that buys a general reader nothing -- together they are
+# 39% of segments, so it is the label most readers hit after yard track. What
+# the label has to carry is that this is not mainline, which it does. The FRA
+# definitions themselves are in prep_data.R and the data dictionary
+# (doi 10.21949/1528950); this table is the display wording, not the source
+# semantics. prep_data.R drops the four non-operational codes, so only these six
+# can reach the map -- the fallback exists so an unmatched code renders as plain
+# "Rail track" rather than NA at a reader.
+rail_class <- c(M = "Mainline track",
+                O = "Industrial track",
+                I = "Industrial track",
+                Y = "Yard track",
+                S = "Passing siding",
+                F = "Rail ferry connection")
+
+# Owner reporting marks, expanded only where the mark could be verified against
+# the AAR marks list AND the segments' own cities corroborate it. Anything not
+# listed shows as the bare mark, which is what the source carries. Deliberately
+# absent: PVTX (a private-owner placeholder, not a railroad), SIRR (the marks
+# list reads Southern Industrial, but every segment here is Staten Island and
+# north Jersey), EJR and NIRC (unverified; Metra's own mark is METX).
+rail_owner <- c(
+  UP   = "Union Pacific",             CSXT = "CSX Transportation",
+  NS   = "Norfolk Southern",          BNSF = "BNSF Railway",
+  CSAO = "Conrail Shared Assets",     CN   = "Canadian National",
+  AMTK = "Amtrak",                    PHL  = "Pacific Harbor Line",
+  CPRS = "Canadian Pacific",          IHB  = "Indiana Harbor Belt",
+  MBTA = "Massachusetts Bay Transportation Authority",
+  TMBL = "Tacoma Municipal Belt Line", URR = "Union Railroad",
+  SCAX = "Southern California Regional Rail Authority",
+  KCS  = "Kansas City Southern",      NJT  = "New Jersey Transit",
+  PW   = "Providence & Worcester",    TRRA = "Terminal Railroad Association",
+  NYSW = "New York, Susquehanna & Western",
+  LI   = "Long Island Rail Road",     MNCW = "Metro-North Commuter Railroad")
+
+# One hover-label format for the whole overlay, matching the zone and tract
+# labels: a bold identity line, then "Label: <b>value</b>" rows. Before this the
+# three groups each had their own run-on middot construction and only airports
+# were bolded, so they read as three formats rather than one set. A row whose
+# value is missing drops out entirely rather than showing a blank.
+lab_row <- function(label, value, suffix = "") {
+  v <- as.character(value)
+  ifelse(!is.na(v) & nzchar(v),
+         sprintf("<br/>%s: <b>%s</b>%s", label, v, suffix), "")
+}
+
+# Assemble one group's labels. The nrow guard is load-bearing: paste0 treats a
+# zero-length vector as "" and returns a length-1 string, so a city with nothing
+# in a group would get a single label assigned to a zero-row frame and the draw
+# observer would die. Ten of the 221 cities carry no highways and two carry no
+# rail, so this is a live path rather than a defensive one.
+infra_lab <- function(x, ...) if (nrow(x)) lapply(paste0(...), htmltools::HTML) else list()
 
 # The three mutually exclusive fill layers, named once. Every clearGroup,
 # hideGroup and the layers control read from here, so a relabel is one edit and
@@ -242,12 +352,12 @@ fill_groups <- c(grade     = "HOLC (grade)",
                  zone_exp  = "HOLC (exposure)",
                  tract_exp = "Tracts (exposure)")
 
-# Segmented control for Source and Type, the same visual language as the view
+# Segmented control for Source and Exposure, the same visual language as the view
 # switch: a sunken track with the active option filled blue and its label
 # reversed to white. Three and four options is few enough that a dropdown only
 # hides the choice set behind a click.
 #
-# Laid out as a T-chart: Source and Type side by side as two columns, each
+# Laid out as a T-chart: Source and Exposure side by side as two columns, each
 # with its options stacked under its own heading. Reading down a column is
 # what compares the options within one axis, and the two axes sit level with
 # each other rather than one above the other.
@@ -308,17 +418,15 @@ city_choices <- setNames(cities$place, cities$place)
 # p is NULL when the city has no nonzero values at all, in which case there is
 # no ramp to draw and the key is the zero swatch alone -- which is the whole
 # story for that view, and still needs saying.
-exposure_key <- function(p, vals, has_zero) {
+exposure_key <- function(p, rng, has_zero, national = FALSE) {
   zero_row <- if (has_zero)
     div(class = "lg-zero",
         span(class = "lg-sw", style = sprintf("background:%s;", zero_col)),
         "No measurable exposure")
 
-  if (is.null(p) || !length(vals))
+  if (is.null(p) || is.null(rng) || !all(is.finite(rng)))
     return(tags$div(class = "lg", div(class = "lg-title", "Exposure"),
                     zero_row))
-
-  rng   <- range(vals)
   stops <- if (rng[1] == rng[2]) rep(rng[1], 2) else seq(rng[1], rng[2], length.out = 12)
   grad  <- paste(p(stops), collapse = ", ")
   ticks <- pretty(rng, n = 3)
@@ -329,9 +437,15 @@ exposure_key <- function(p, vals, has_zero) {
 
   tags$div(
     class = "lg",
+    # The basis line is the whole reason the two scales can coexist: the same
+    # ramp means two different things depending on it, so the key has to say
+    # which. Under the national scale it also flags the clipped ends, because
+    # the top color is "at or past the 98th percentile", not "the maximum".
     div(class = "lg-title", HTML(paste0(
-      "Exposure<br/><small>log(xp+1), scaled within city<br/>",
-      "zones and tracts on one scale</small>"))),
+      "Exposure<br/><small>log(xp+1), ",
+      if (national) "national scale, ends clipped at 2nd/98th pct"
+      else "scaled within city",
+      "<br/>zones and tracts on one scale</small>"))),
     div(class = "lg-ramp",
         div(class = "lg-bar",
             style = sprintf("background:linear-gradient(to top, %s);", grad)),
@@ -389,9 +503,10 @@ ui <- page_sidebar(
     div(class = "brand-head",
         # Names the two subjects with no verb between them, which is what lets
         # the title pair them without claiming a mechanism; the descriptive-only
-        # hedge stays in the method block. "Emissions" covers noise because that
-        # is the app's own vocabulary: the selectors are Emission Source and
-        # Emission Type, and noise is one of the types.
+        # hedge stays in the method block. "Emissions" covers noise because
+        # noise is one of the choices under the Exposure selector, alongside the
+        # three air pollutants; "Exposure" is the other selector's label, so the
+        # title's last word is the app's own vocabulary too.
         div(class = "app-brand-title",
             "Redlining & Disparities in Transportation Emissions Exposure"),
         # Right-aligned controls: the view switch, then About. The switch is not
@@ -537,9 +652,9 @@ ui <- page_sidebar(
     ),
     div(class = "seg-pair",
         seg_radio("sector", "Source", sectors, "Rail"),
-        seg_radio("poll", "Type", poll_seg, "Noise",
+        seg_radio("poll", "Exposure", poll_seg, "Noise",
                   titles = names(pollutants))),
-    # Source and Type stay visible in both views: the first tints the chart's
+    # Source and Exposure stay visible in both views: the first tints the chart's
     # matching panel without driving it, and the second sets which pollutant
     # the whole national view is about. Everything below this point belongs to
     # one view or the other.
@@ -556,6 +671,11 @@ ui <- page_sidebar(
     # treats NULL as "light", which is what renderLeaflet draws.
     conditionalPanel(
       condition = "input.view === 'map' || input.view === undefined",
+      # The Color scale switch is NOT here either -- it sits on the map with the
+      # basemap switch (see scale_control), so `input$scale` has no sidebar
+      # widget behind it and is NULL until the reader touches it. scale_national()
+      # treats NULL as "city", which is what the map opens on.
+      #
       # Satellite is unreadable under an opaque choropleth, so the fill has to be
       # dimmable for the imagery to be worth switching to at all.
       sliderInput("fillop", "Fill opacity", min = 0.2, max = 1, value = 0.8,
@@ -586,11 +706,20 @@ ui <- page_sidebar(
       # Reading notes for the map, moved out of the banner: they explain this
       # view's figures and nothing else.
       helpText(
-        "Each polygon is shaded by modeled exposure on a log scale, darker",
-        "meaning higher. The scale is fitted to the selected city, so it reads",
-        "the spread within that city and colors are not comparable between",
-        "cities. Areas with no measurable exposure get their own shade, because",
-        "an absence is not a low value."
+        HTML(paste(
+          "Each polygon is shaded by modeled exposure on a log scale, darker",
+          "meaning higher. The <b>color scale</b> switch on the map chooses what",
+          "the shading is relative to.",
+          "<b>This city</b> fits the ramp to the selected city's",
+          "own range, which shows the spread inside the city but makes colors",
+          "meaningless between cities. <b>All cities</b> fits it to the national",
+          "range for the selected source and exposure, so two cities can be",
+          "compared directly, at the cost of a low-exposure city reading as",
+          "almost uniformly pale, which is the honest answer at that scale. The",
+          "national ends are clipped at the 2nd and 98th percentiles, so the",
+          "darkest shade means at or past the top of the scale. Areas with no",
+          "measurable exposure get their own shade, because an absence is not a",
+          "low value."))
       ),
       helpText(
         HTML("Three fill views in the layer control (top-right of the map), one",
@@ -829,7 +958,7 @@ ui <- page_sidebar(
      /* The empty .tabbable leaves the nav's line height behind once the list is
         gone; the panels start at the top of the content area instead. */
      .tabbable > .tab-content { margin-top: 0; }
-     /* Segmented radio groups (Source, Type). No enclosing track: the buttons
+     /* Segmented radio groups (Source, Exposure). No enclosing track: the buttons
         carry their own fill, offset from the sidebar rather than sitting in a
         tinted well. The sidebar is rgba(0,0,0,.05) over white, so an unselected
         button reads by being lighter than what is behind it and the selected
@@ -842,17 +971,17 @@ ui <- page_sidebar(
      /* Basemap switch, drawn on the map above the layer selectors. Matches the
         layers control's own frame (white, 5px radius, the same drop shadow) so
         the two read as one stack of map controls rather than a stray widget. */
-     .bm-ctl-wrap { background: #fff; border-radius: 5px; padding: 5px;
+     .mapseg-wrap { background: #fff; border-radius: 5px; padding: 5px;
                     box-shadow: 0 1px 5px rgba(0,0,0,.4);
                     margin-bottom: 6px !important; }
-     .bm-ctl { display: flex; gap: 3px; }
-     .bm-btn { border: 0; border-radius: 3px; cursor: pointer;
+     .mapseg { display: flex; gap: 3px; }
+     .mapseg-btn { border: 0; border-radius: 3px; cursor: pointer;
                padding: .18rem .5rem; font-size: .72rem; font-weight: 600;
                line-height: 1.45; color: #495057; background: #eef0f2;
                transition: background-color .15s ease, color .15s ease; }
-     .bm-btn:hover { background: #e0e4e8; color: #1d2124; }
-     .bm-btn.active { background: #2780e3; color: #fff; }
-     .bm-btn:focus-visible { outline: 2px solid #1a5fa8; outline-offset: 1px; }
+     .mapseg-btn:hover { background: #e0e4e8; color: #1d2124; }
+     .mapseg-btn.active { background: #2780e3; color: #fff; }
+     .mapseg-btn:focus-visible { outline: 2px solid #1a5fa8; outline-offset: 1px; }
      /* T-chart: the two axes side by side, equal columns so neither reads as
         the primary one. min-width:0 or a long label pushes its column wider
         than its half. */
@@ -1054,14 +1183,19 @@ server <- function(input, output, session) {
               exp_frame$pollutant == input$poll, c("HOLCID", "xp")]
   })
 
-  # NONZERO logxp values for the SELECTED CITY -- the ramp domain and the legend
-  # range. The ramp is fitted per city, not nationally: the map shows one city at
-  # a time, and any single city occupies a narrow slice of the national spread,
-  # so a national domain rendered most sector x pollutant views near-uniform
-  # (road NO2 was close to a single color everywhere). The tradeoff is that
-  # colors are NOT comparable between cities -- the legend and the sidebar say
-  # so, and the equity chart below is where cross-city context lives. Dropping
-  # zeros keeps the mass of no-exposure zones from compressing the ramp.
+  # NONZERO logxp values for the SELECTED CITY -- the domain of the per-city
+  # scale, and the default. It reads the spread inside one city, at the cost of
+  # colors meaning nothing between cities.
+  #
+  # The national scale (nat_domain, above) is the other half of that trade and
+  # the reason both exist. A pooled domain was tried and dropped once for
+  # rendering most views near-uniform, but that objection only holds while it is
+  # the ONLY scale: under a national ramp a low-exposure city SHOULD read as
+  # uniformly pale, because that is what it is. It reads as a defect only if you
+  # expect within-city structure, which is what this domain is for. Each scale
+  # answers its own question, so neither has to answer both.
+  #
+  # Dropping zeros keeps the mass of no-exposure zones from compressing the ramp.
   #
   # ONE domain across both exposure layers, pooling the zone and tract values.
   # comb.R builds a zone's xp as the area-weighted mean of the tracts
@@ -1075,14 +1209,34 @@ server <- function(input, output, session) {
     v[!is.na(v) & v > 0]
   })
 
-  pal <- reactive({
+  # NULL until the reader touches the control on first paint, and "city" is the
+  # default the UI declares, so every read treats NULL as "city".
+  scale_national <- reactive(identical(input$scale, "national"))
+
+  # The domain the ramp is fitted to. Per city it is that city's own nonzero
+  # spread; nationally it is the trimmed range for the selected sector x
+  # pollutant, which does not move as the reader changes city -- that fixedness
+  # is the entire point, since it is what makes two cities' colors mean the same
+  # thing. Returns NULL when there is nothing to draw.
+  pal_domain <- reactive({
+    if (scale_national()) {
+      rng <- nat_domain[[paste(input$sector, input$poll)]]
+      if (is.null(rng) || !all(is.finite(rng))) return(NULL)
+      return(rng)
+    }
     v <- nz_vals()
-    if (!length(v)) return(NULL)   # no ramp to draw
+    if (!length(v)) return(NULL)
+    range(v)
+  })
+
+  pal <- reactive({
+    rng <- pal_domain()
+    if (is.null(rng)) return(NULL)   # no ramp to draw
     # A per-city domain can collapse to a single distinct value (one zone with
     # exposure, or several with identical values), which colorNumeric rejects.
     # Pad it so those zones still get a ramp color instead of falling through to
-    # the near-white "no data" fill.
-    rng <- range(v)
+    # the near-white "no data" fill. A national domain cannot collapse, but the
+    # guard is cheap and covers both.
     if (rng[1] == rng[2]) rng <- rng + c(-1, 1) * max(abs(rng[1]) * 0.01, 1e-6)
     colorNumeric("YlOrRd", domain = rng, na.color = na_col)
   })
@@ -1090,11 +1244,21 @@ server <- function(input, output, session) {
   # per-zone fill: zero -> grey, unmatched -> near-white, else the ramp. Returns
   # a PLAIN (unnamed) vector -- a named one serializes to a JS object and every
   # polygon renders as "[object Object]".
-  fill_exposure <- function(z, p) {
+  # `rng` clamps the value into the palette's domain before coloring. Under the
+  # per-city scale nothing is ever outside it, but the national domain is
+  # trimmed at the 2nd and 98th percentiles, and colorNumeric hands anything
+  # outside its domain the na.color -- which is the near-white "no data" fill.
+  # Without the clamp the most exposed places in the country, the ones the map
+  # most needs to show, would render as though nothing were known about them.
+  fill_exposure <- function(z, p, rng = NULL) {
     out  <- rep(na_col, nrow(z))
     have <- !is.na(z$xp)
     nz   <- have & z$xp > 0
-    if (!is.null(p) && any(nz)) out[nz] <- p(z$logxp[nz])
+    if (!is.null(p) && any(nz)) {
+      v <- z$logxp[nz]
+      if (!is.null(rng)) v <- pmin(pmax(v, rng[1]), rng[2])
+      out[nz] <- p(v)
+    }
     out[have & z$xp == 0] <- zero_col
     unname(out)
   }
@@ -1377,7 +1541,17 @@ server <- function(input, output, session) {
             el.querySelectorAll('.legend-exposure').forEach(function(e){ e.style.display = exp ? '' : 'none'; });
             el.querySelectorAll('.legend-grade').forEach(function(e){ e.style.display = exp ? 'none' : ''; });
           }
-          map.on('baselayerchange', function(e){ apply(e.name); });
+          // baselayerchange fires ONLY when the reader clicks the control --
+          // proxy re-adds do not raise it, which is why the MutationObserver
+          // below exists at all. That makes it the one honest signal of intent,
+          // so it is what gets reported to the server as the remembered layer.
+          // Reporting from the MutationObserver instead would echo back the
+          // default mid-redraw, before the server has restored the selection,
+          // and overwrite the very thing being restored.
+          map.on('baselayerchange', function(e){
+            apply(e.name);
+            if (window.Shiny) Shiny.setInputValue('active_fill', e.name, {priority: 'event'});
+          });
           new MutationObserver(function(){
             var c = el.querySelector('.leaflet-control-layers-base input:checked');
             apply(c ? c.parentNode.textContent.trim() : '%s');
@@ -1399,19 +1573,23 @@ server <- function(input, output, session) {
       htmlwidgets::onRender("
         function(el) {
           function wire() {
-            var w = el.querySelector('.bm-ctl-wrap');
-            if (!w || w.dataset.wired) return;
-            w.dataset.wired = '1';
-            L.DomEvent.disableClickPropagation(w);
-            L.DomEvent.disableScrollPropagation(w);
-            w.addEventListener('click', function(e) {
-              var b = e.target.closest('.bm-btn');
-              if (!b) return;
-              w.querySelectorAll('.bm-btn').forEach(function(o) {
-                o.classList.remove('active');
+            el.querySelectorAll('.mapseg-wrap').forEach(function(w) {
+              if (w.dataset.wired) return;
+              var seg = w.querySelector('.mapseg');
+              if (!seg) return;
+              w.dataset.wired = '1';
+              L.DomEvent.disableClickPropagation(w);
+              L.DomEvent.disableScrollPropagation(w);
+              w.addEventListener('click', function(e) {
+                var b = e.target.closest('.mapseg-btn');
+                if (!b) return;
+                w.querySelectorAll('.mapseg-btn').forEach(function(o) {
+                  o.classList.remove('active');
+                });
+                b.classList.add('active');
+                Shiny.setInputValue(seg.getAttribute('data-input'),
+                                    b.getAttribute('data-val'));
               });
-              b.classList.add('active');
-              Shiny.setInputValue('basemap', b.getAttribute('data-bm'));
             });
           }
           wire();
@@ -1437,13 +1615,26 @@ server <- function(input, output, session) {
   # matters more than it did.
   last_city <- reactiveVal(NULL)
 
+  # Which fill the reader has chosen in the layers control, remembered across
+  # redraws. Seeded with the layer the map opens on. Fed only by the JS
+  # baselayerchange handler, which fires on a click and not on a proxy re-add,
+  # so a redraw can never write its own default back in here. The name is
+  # validated against fill_groups before it is trusted: it arrives as a display
+  # string from the DOM, and a relabel that missed this path would otherwise
+  # leave every fill hidden and the map blank.
+  active_fill <- reactiveVal(unname(fill_groups[["zone_exp"]]))
+  observeEvent(input$active_fill, {
+    if (input$active_fill %in% unname(fill_groups)) active_fill(input$active_fill)
+  })
+
   observe({
-    z  <- city_zones()
-    p  <- pal()
+    z   <- city_zones()
+    p   <- pal()
+    dom <- pal_domain()
     # per-zone grade color as a PLAIN (unnamed) vector -- a named vector
     # serializes to a JS object and every polygon renders as "[object Object]"
     z$grade_col <- unname(grade_cols[as.character(z$grade)])
-    z$exp_col   <- fill_exposure(z, p)
+    z$exp_col   <- fill_exposure(z, p, dom)
     # a zero zone reads "none measured", not "0.000" -- the number invites the
     # reader to treat it as a small measurement rather than an absence
     xp_txt <- ifelse(is.na(z$xp), "n/a",
@@ -1471,7 +1662,7 @@ server <- function(input, output, session) {
     # is the city's surface, and there are roughly twice as many of them, so
     # zone-weight hairlines turn a large city into a mesh.
     tr <- city_tracts()
-    tr$exp_col <- fill_exposure(tr, p)
+    tr$exp_col <- fill_exposure(tr, p, dom)
     tr_xp_txt <- ifelse(is.na(tr$xp), "n/a",
                         ifelse(tr$xp == 0, "none measured", sprintf("%.3f", tr$xp)))
     # pop_total here is the tract's own ACS count, not the zone layer's
@@ -1524,19 +1715,29 @@ server <- function(input, output, session) {
       ) |>
       # mutually exclusive views -- fill choropleths can't co-read when stacked,
       # so switch between them. Listed unit-first so the two HOLC fills sit
-      # together and the eye reads the unit before the variable; the default is
-      # still the HOLC exposure fill, set by hiding the other two rather than by
-      # list position.
+      # together and the eye reads the unit before the variable; which one opens
+      # is set by hiding the other two rather than by list position.
       # Added before the layers control so it sits above it in the corner, and
       # re-added here because clearControls() above drops it with the legends.
       addControl(basemap_control(input$basemap), position = "topright",
-                 className = "bm-ctl-wrap") |>
+                 className = "mapseg-wrap") |>
+      addControl(scale_control(input$scale), position = "topright",
+                 className = "mapseg-wrap") |>
       addLayersControl(
         baseGroups = unname(fill_groups[c("grade", "zone_exp", "tract_exp")]),
         overlayGroups = unname(infra_groups),
         options = layersControlOptions(collapsed = FALSE)
-      ) |>
-      hideGroup(fill_groups[["grade"]]) |> hideGroup(fill_groups[["tract_exp"]])
+      )
+
+    # Restore the reader's fill choice instead of resetting to the default. This
+    # observer re-runs on city, sector, exposure, color scale, opacity and
+    # basemap, and every run rebuilds all three fills and the layers control, so
+    # hiding two fixed groups here meant any of those six controls silently threw
+    # the reader back to HOLC (exposure). isolate: a layer switch must not
+    # retrigger the redraw that is restoring it.
+    keep <- isolate(active_fill())
+    for (g in unname(fill_groups))
+      prox <- if (identical(g, keep)) showGroup(prox, g) else hideGroup(prox, g)
 
     # ONE exposure key: the ramp with the zero swatch nested beneath it, inside
     # the same box. A zero belongs to the same reading -- it is the absence the
@@ -1555,7 +1756,7 @@ server <- function(input, output, session) {
     # would only assert otherwise.
     if (!is.null(p) || has_zero)
       prox <- prox |>
-        addControl(exposure_key(p, nz_vals(), has_zero),
+        addControl(exposure_key(p, dom, has_zero, scale_national()),
                    position = "bottomright",
                    className = "info legend legend-exposure")
 
@@ -1614,20 +1815,30 @@ server <- function(input, output, session) {
     # Interstates carry more traffic than the other freeways in class 2 and are
     # the segment of the network the redlining literature actually argues about,
     # so they are drawn heavier. A segment with neither a route shield nor a
-    # street name in HPMS gets a generic label rather than an empty tooltip.
-    rd$lab <- ifelse(nzchar(rd$name), rd$name, "Limited-access highway")
-    has_aadt <- !is.na(rd$aadt) & rd$aadt > 0
-    rd$lab <- ifelse(has_aadt,
-                     sprintf("%s &middot; %s vehicles/day", rd$lab,
-                             format(round(rd$aadt), big.mark = ",",
-                                    scientific = FALSE, trim = TRUE)),
-                     rd$lab)
-    rd$lab <- lapply(rd$lab, htmltools::HTML)
+    # street name in HPMS gets a generic identity line rather than an empty one.
+    rd_name <- ifelse(nzchar(rd$name) & !is.na(rd$name), rd$name,
+                      "Limited-access highway")
+    rd_aadt <- ifelse(!is.na(rd$aadt) & rd$aadt > 0,
+                      format(round(rd$aadt), big.mark = ",",
+                             scientific = FALSE, trim = TRUE),
+                      NA_character_)
+    rd$lab <- infra_lab(rd,
+      "<b>", rd_name, "</b>",
+      lab_row("Class", road_class[as.character(rd$fclass)]),
+      lab_row("Traffic", rd_aadt, " vehicles/day"))
 
     rl <- ci$rail
-    rl$lab <- ifelse(is.na(rl$owner) | !nzchar(rl$owner), "Rail track",
-                     paste("Rail track &middot;", rl$owner))
-    rl$lab <- lapply(rl$lab, htmltools::HTML)
+    # The class is the identity line because the bundle carries no name for a
+    # rail segment, and it is the thing worth saying: yard and spur are kept
+    # deliberately, so the label should distinguish them from mainline rather
+    # than calling all of it "Rail track".
+    rl_class <- unname(rail_class[as.character(rl$net)])
+    rl_class[is.na(rl_class)] <- "Rail track"
+    rl_owner <- ifelse(is.na(rl$owner) | !nzchar(rl$owner), NA_character_,
+                       ifelse(rl$owner %in% names(rail_owner),
+                              sprintf("%s (%s)", rail_owner[rl$owner], rl$owner),
+                              rl$owner))
+    rl$lab <- infra_lab(rl, "<b>", rl_class, "</b>", lab_row("Owner", rl_owner))
 
     av <- ci$avi
 
@@ -1650,9 +1861,11 @@ server <- function(input, output, session) {
           radius = ifelse(av$towered, 7, 4.5), stroke = TRUE,
           color = "#123", weight = 1.2, opacity = 0.9,
           fillColor = avi_col, fillOpacity = 0.85,
-          label = lapply(sprintf("<b>%s</b> (%s)%s", av$name, av$id,
-                                 ifelse(av$towered, "", " &middot; no control tower")),
-                         htmltools::HTML),
+          label = lapply(paste0(
+            "<b>", av$name, "</b>",
+            lab_row("Code", av$id),
+            lab_row("Control tower", ifelse(av$towered, "Yes", "No"))),
+            htmltools::HTML),
           options = pathOptions(pane = "infra"))
 
     # Applied here as well as in the sector observer below: the layers are added
