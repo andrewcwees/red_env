@@ -1380,7 +1380,7 @@ server <- function(input, output, session) {
   output$chart_title <- renderText({
     grp <- if (input$eby == "grade") "HOLC grade"
            else sprintf("%s quintile", eby_label())
-    sprintf("%s exposure by %s, all three sectors",
+    sprintf("%s exposure by %s",
             tools::toTitleCase(poll_label()), grp)
   })
 
