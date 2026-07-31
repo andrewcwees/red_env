@@ -853,7 +853,7 @@ ui <- page_sidebar(
        .app-brand-title { font-size: 1.5rem; }
        .navbar { padding: 1.1rem 0 .9rem; }
      }
-     .vb-note { margin-top: .45rem; font-size: .7rem; line-height: 1.35;
+     .da-note { margin-top: .45rem; font-size: .7rem; line-height: 1.35;
                 opacity: .65; }
      /* Per-city figures in the sidebar. Stacked with a gap of their own, and
         the cards give up their fill behaviour: in a sidebar they size to their
@@ -906,18 +906,19 @@ ui <- page_sidebar(
         length axis is fixed across every sector x pollutant (grade_idx_max), so
         a flat selection draws short bars instead of being rescaled up to fill
         the same track a steep one does. */
-     .da { margin-top: .5rem; max-width: 34rem; }
+     .da { max-width: 34rem; }
      .da-row { display: flex; align-items: center; gap: .45rem;
                margin-bottom: .3rem; }
      .da-lab { width: 1rem; flex: 0 0 auto; font-weight: 700; font-size: .8rem; }
      .da-track { flex: 1 1 auto; height: .7rem; border-radius: .35rem;
                  background: rgba(0,0,0,.08); position: relative; }
      .da-fill { height: 100%; border-radius: .35rem; }
-     /* Parity tick at 1.0x, the grade-A baseline. Light rather than dark
-        because the box is the theme's primary blue. Grade A's own bar ends
-        exactly on it, which is what makes the tick self-explaining. */
+     /* Parity tick at 1.0x, the grade-A baseline. Dark, because the staircase
+        sits on a plain white card -- it was white when this was a primary-blue
+        value_box, and a white tick on a white card is invisible. Grade A's own
+        bar ends exactly on it, which is what makes the tick self-explaining. */
      .da-base { position: absolute; top: -.15rem; bottom: -.15rem; width: 1px;
-                background: rgba(255,255,255,.6); }
+                background: rgba(0,0,0,.35); z-index: 1; }
      .da-idx { width: 2.9rem; flex: 0 0 auto; text-align: right;
                font-size: .82rem; font-weight: 700;
                font-variant-numeric: tabular-nums; }
@@ -1175,20 +1176,26 @@ ui <- page_sidebar(
       # contents instead of stretching to the panel.
       layout_columns(
         fill = FALSE, col_widths = 12,
+        # The staircase alone: four grades, each indexed to grade A's median.
         # A D:A ratio on its own is an endpoint, and an endpoint is the wrong
         # summary for two of the three sectors: aviation NO2 ends at 0.99x but
         # peaks at grade B (1.09x), and road NO ends at 1.19x after peaking at C.
-        # So the box draws all four grades as a staircase indexed to grade A --
-        # the ratio stays as the headline, and the shape underneath says whether
-        # that ratio describes a gradient or just its two ends. Indexing also
-        # retires the old bars' worst property: they were proportional-only,
-        # because the raw xp medians span 0.97 to 2.4e5 in arbitrary model units
-        # and printing them adds a number nobody can interpret. A multiple of
-        # grade A is a unit that reads on its own. Each row keeps its n, because
-        # grade A is the small-N constraint everywhere in this project.
-        value_box(title = "Redlined (D) vs. best-graded (A)",
-                  value = textOutput("vb_ratio"),
-                  uiOutput("vb_ratio_detail"), theme = "primary")
+        # The shape says whether a gradient exists; the two ends do not.
+        # Indexing also retires the old bars' worst property: they were
+        # proportional-only, because the raw xp medians span 0.97 to 2.4e5 in
+        # arbitrary model units and printing them adds a number nobody can
+        # interpret. A multiple of grade A is a unit that reads on its own. Each
+        # row keeps its n, because grade A is the small-N constraint everywhere
+        # in this project.
+        #
+        # No title and no headline number. The headline was s$idx[["D"]], which
+        # is exactly what the D row already prints, so it was the staircase's
+        # bottom row at a larger size and carried nothing the rows did not. With
+        # both gone there is no value left to box, so this is a plain card: the
+        # rows caption themselves with their grade letter, index and n, and the
+        # note under them names the sector and pollutant, which the old title
+        # never did.
+        card(uiOutput("da_panel"))
       ),
       card(
         # No fixed height: the method block sits under the plot and its length
@@ -1407,23 +1414,18 @@ server <- function(input, output, session) {
     list(med = med, n = n, idx = idx)
   })
 
-  output$vb_ratio <- renderText({
-    s <- da_stats()
-    if (!is.finite(s$idx[["D"]])) "n/a" else sprintf("%.1f×", s$idx[["D"]])
-  })
-
   # Bar length is the grade's index on the fixed grade_idx_max axis, so lengths
   # mean the same thing across every sector x pollutant the selectors can reach.
   # The basis line stays even though this box now sits in a view whose sidebar
   # states the basis: the project keeps two number bases that differ materially
   # (rail noise D:A is 2.96x here against 2.0x on the mapped bundle), so any
   # figure quoted out of the app still has to say which one it came from. And
-  # where the peak is not grade D the note says so -- the headline ratio is an
-  # endpoint, and for aviation and road the endpoint is not the maximum.
-  output$vb_ratio_detail <- renderUI({
+  # where the peak is not grade D the note says so -- D is the last row, not
+  # necessarily the tallest, and for aviation and road it is not the maximum.
+  output$da_panel <- renderUI({
     s <- da_stats()
     if (!is.finite(s$idx[["A"]]) || !is.finite(s$idx[["D"]]))
-      return(div(class = "vb-note",
+      return(div(class = "da-note",
                  "No zones with measurable exposure in one of the two grades."))
     bar <- function(g) {
       v <- s$idx[[g]]
@@ -1450,7 +1452,7 @@ server <- function(input, output, session) {
     if (max(idx) < s$idx[["D"]] * 1.05) peak <- "D"
     tagList(
       div(class = "da", lapply(grade_levels, bar)),
-      div(class = "vb-note",
+      div(class = "da-note",
           sprintf(paste("Median %s %s exposure by grade, each as a multiple of",
                         "grade A. Zones with measurable exposure only; zeros",
                         "excluded. All %s graded zones in %d cities.%s"),
