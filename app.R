@@ -553,11 +553,10 @@ ui <- page_sidebar(
               `data-bs-toggle` = "collapse", `data-bs-target` = "#brand-body",
               `aria-expanded` = "true", `aria-controls` = "brand-body",
               span(class = "ct-label", "About"), span(class = "ct-chev", "▲")))),
-    # The banner holds only what is true of the whole app: what the grades are
-    # and where the data came from. Anything that explains one view's figures or
-    # controls belongs in that view's sidebar, which is where a reader is already
-    # looking when they need it -- including what each view is computed on, which
-    # the Data tab's basis card states in full.
+    # The banner holds only what is true of the whole app: what the grades are,
+    # what the app is computed on, and where the data came from. Anything that
+    # explains one view's figures or controls belongs in that view's sidebar,
+    # which is where a reader is already looking when they need it.
     div(
       id = "brand-body", class = "collapse show",
       # Written for a reader who has never heard of redlining, so the first
@@ -568,16 +567,17 @@ ui <- page_sidebar(
       p(class = "app-brand-lede",
         "Home foreclosures surged during the Great Depression, prompting the",
         "federal government to establish the temporary Home Owners' Loan",
-        "Corporation (HOLC) to buy defaulted mortgages from banks and reissue",
-        "them on more forgiving terms. For more than 200 cities where HOLC",
+        "Corporation (HOLC) to buy defaulted mortgages and reissue them at",
+        "more affordable rates. For more than 200 cities where HOLC",
         "bought assets, the agency rated neighborhoods on a four-letter grading",
         "system of A (best) through D (hazardous) to describe mortgage lending",
         "risk. The grades tracked who lived there: neighborhoods with Black,",
         "immigrant, and low-income residents were routinely marked D, colored",
         "red on the map, and largely shut out of federally backed mortgage",
-        "lending, which is where the term redlining comes from."),
+        "lending. This is the origin of the term ‘redlining’."),
       # Second paragraph answers the question a newcomer actually has, which is
-      # why a mortgage map would predict a highway. Both directions are stated
+      # why a mortgage map would predict a highway, and then carries it through
+      # to the present day. Both directions of the historical link are stated
       # because both are documented and they run opposite ways: appraisers
       # logged rail and industry already on the ground as detrimental
       # influences, and the interstates came after. Two claims deliberately not
@@ -588,6 +588,11 @@ ui <- page_sidebar(
       # depressed land values, which compounded racially motivated decisions to
       # site freeways in Black neighborhoods. The citation sits mid-sentence, so
       # the paragraph is one HTML string for the reason ext_link() exists.
+      #
+      # The present-day findings were their own paragraph and are folded in
+      # here: they are the same thread (how transportation enters, and what that
+      # left behind), and splitting them left the banner with two short
+      # paragraphs where one continuous one reads better.
       p(class = "app-brand-lede", HTML(paste0(
         "Transportation is part of this story. Appraisers marked down ",
         "neighborhoods located near emission sources like rail yards and ",
@@ -597,16 +602,8 @@ ui <- page_sidebar(
         "down (",
         ext_link("https://doi.org/10.1016/bs.atpp.2021.06.007",
                  "Barajas 2021"),
-        ")."))),
-      # Third paragraph is the present day, split out from the history so the
-      # banner reads as then / how transportation enters / now. The close hands
-      # the direction of the gradient to the panels rather than promising one:
-      # aviation noise is flat across grades and aviation NO peaks at B, so a
-      # banner asserting a direction would be contradicted on screen.
-      p(class = "app-brand-lede", HTML(paste0(
-        "Ninety years later the grades ",
-        "still track environmental burden: formerly D-graded neighborhoods have ",
-        "more air pollution (",
+        "). Ninety years later the grades still track environmental burden: ",
+        "formerly D-graded neighborhoods have more air pollution (",
         ext_link("https://doi.org/10.1021/acs.estlett.1c01012",
                  "Lane et al. 2022"),
         "), more transportation noise (",
@@ -621,8 +618,33 @@ ui <- page_sidebar(
         "), a pattern found nearly everywhere it has been tested (",
         ext_link("https://doi.org/10.1007/s11524-022-00665-z",
                  "Swope et al. 2022"),
-        "). This dashboard maps present-day transportation emissions onto those ",
-        "grades, one source at a time."))),
+        ")."))),
+      # Third paragraph is now what the dashboard itself is: the sample it runs
+      # on and what it does not claim. The sample line is the app's own frame,
+      # read from the bundle rather than typed, so a rebuild cannot strand it --
+      # this is also the only place the population is stated now that the Data
+      # sidebar's basis paragraph and the chart's method block are gone.
+      #
+      # The hedge is two sentences. Descriptive, which is the whole claim about
+      # the figures: the app fits nothing. And the weaker reading of the grades
+      # themselves -- a marker of where mid-century disinvestment concentrated
+      # rather than a demonstrated cause of what a place is like now, which is
+      # what the literature supports (the HOLC did not use these maps in its own
+      # refinancing, the appraisal logic spread through FHA underwriting, and
+      # the one boundary-discontinuity design in refs/ reports small effects).
+      #
+      # The close hands the direction of the gradient to the panels rather than
+      # promising one: aviation noise is flat across grades and aviation NO
+      # peaks at B, so a banner asserting a direction would be contradicted on
+      # screen by the reader's second click.
+      p(class = "app-brand-lede", HTML(sprintf(paste0(
+        "This dashboard maps present-day transportation emissions onto those ",
+        "grades: %s HOLC-graded neighborhoods across %d ",
+        "cities in %d states, with three emission sources and four exposure ",
+        "measures. The figures are descriptive. The grading system is best read ",
+        "as a marker of where mid-century disinvestment concentrated rather ",
+        "than as a demonstrated cause of what neighborhoods are like today."),
+        format(nrow(frame), big.mark = ","), frame_cities, frame_states))),
       # Sourcing only, one source per line. Each names the quantity the app
       # computes, then its publisher, and links out. Every input is public, so
       # a reader who wants the unit, the vintage detail, or the methodology is
@@ -777,33 +799,11 @@ ui <- page_sidebar(
     ),
     conditionalPanel(
       condition = "input.view === 'national'",
-      # What this view is computed on. It was a card beside the D:A box, which
-      # put a static block of prose in the one place on the tab where the reader
-      # is looking for a number; the sidebar is where the view's own reading
-      # notes live, so it sits with them.
-      helpText(
-        HTML(sprintf(paste("<b>Basis:</b> every one of the %s HOLC-graded zones",
-                           "in the study, %d cities across %d states, pooled.",
-                           "These are the same zones the Map tab draws, so a",
-                           "figure here and a polygon there describe one",
-                           "population. Nothing on this tab is scoped to a",
-                           "single city."),
-                     format(nrow(frame), big.mark = ","), frame_cities,
-                     frame_states))
-      ),
-      helpText(
-        HTML("<b>Chart:</b> exposure across every graded zone in the study.",
-             "Use <b>Group by</b> to",
-             "regroup the same zones by HOLC grade or by a demographic quintile",
-             "(income, %&nbsp;Hispanic, %&nbsp;Black): does the disparity follow",
-             "redlining, income, or present-day demographics?")
-      ),
       helpText(
         HTML("Each sector is indexed to the median of its own leftmost group, so",
              "every panel starts at 1.0 and the last group's height is that",
              "sector's disparity ratio. Levels are not comparable between",
-             "panels; the map carries level. The method note under the chart",
-             "states the population and what the grouping does not control for.")
+             "panels; the map carries level.")
       )
     )
   ),
@@ -878,11 +878,6 @@ ui <- page_sidebar(
      .ct-chev { font-size: .58rem; transition: transform .18s ease;
                 display: inline-block; }
      .collapse-toggle[aria-expanded='false'] .ct-chev { transform: rotate(180deg); }
-     .method { font-size: .72rem; line-height: 1.45; opacity: .72;
-               padding: .1rem .2rem .3rem; }
-     .method b { font-weight: 600; opacity: .9; }
-     .method p { margin-bottom: .3rem; }
-     .method p:last-child { margin-bottom: 0; }
      /* Grade counts as stacked horizontal bars, no title above them. Bars are
         scaled to the city total rather than to the largest grade, so every bar
         reads as its share of the whole city and the grey total bar is the
@@ -1198,15 +1193,9 @@ ui <- page_sidebar(
         card(uiOutput("da_panel"))
       ),
       card(
-        # No fixed height: the method block sits under the plot and its length
-        # moves with the grouping, so a pinned height would clip it.
         # Group by is in this view's sidebar, with the rest of its controls.
         card_header(textOutput("chart_title", inline = TRUE)),
-        plotOutput("equity", height = 340),
-        # Sample and method sit with the plot rather than in the sidebar: they
-        # are what the reader needs to judge the chart, and a caveat filed
-        # somewhere else is a caveat nobody reads.
-        div(class = "method", uiOutput("method_note"))
+        plotOutput("equity", height = 340)
       )
     )
   )
@@ -1229,16 +1218,11 @@ server <- function(input, output, session) {
         c("HOLCID", "xp", "logxp")]
   })
 
-  # All three sectors at the selected pollutant, on the FULL 8,920-zone frame.
-  # The equity chart compares sectors side by side, so it cannot read exp_sel(),
-  # which is narrowed to the one sector the map is drawing; and it reads the
-  # frame rather than `exp` because the frame is the geometry-free table, which
-  # is all a plot needs.
-  exp_poll <- reactive({
-    exp_frame[exp_frame$pollutant == input$poll, c("HOLCID", "sector", "xp")]
-  })
-
-  # Frame-basis slice for the D:A box, same reasoning.
+  # Frame-basis slice for the D:A box AND the equity chart. Both draw the
+  # selected sector at the selected pollutant on the full 8,920-zone frame, so
+  # they read one slice and agree by construction rather than by coincidence.
+  # It reads `exp_frame` rather than `exp` because the frame is the
+  # geometry-free table, which is all a plot needs.
   exp_sel_frame <- reactive({
     exp_frame[exp_frame$sector == input$sector &
               exp_frame$pollutant == input$poll, c("HOLCID", "xp")]
@@ -1382,13 +1366,15 @@ server <- function(input, output, session) {
   })
 
   eby_label <- reactive(names(equity_by)[equity_by == input$eby])
-  # The sector is no longer named here: all three are on the chart, and naming
-  # the selected one would suggest the panel follows the map's selector.
+  # The sector IS named here, and has to be: the chart draws one sector at a
+  # time and follows the Source selector, so a header that omitted it would
+  # leave the reader no way to tell which sector is on screen. This reverses the
+  # earlier rule, which held while all three sectors were faceted side by side.
   output$chart_title <- renderText({
     grp <- if (input$eby == "grade") "HOLC grade"
            else sprintf("%s quintile", eby_label())
-    sprintf("%s exposure by %s",
-            tools::toTitleCase(poll_label()), grp)
+    sprintf("%s %s exposure by %s",
+            tools::toTitleCase(sector_label()), poll_label(), grp)
   })
 
   # ---- value boxes ----
@@ -1937,53 +1923,23 @@ server <- function(input, output, session) {
     apply_infra_vis(leafletProxy("map"), input$sector)
   }, ignoreInit = TRUE)
 
-  # Sample and method, stated where the plots are. Written to be read by someone
-  # deciding how much to trust the panel, so it leads with the population and
-  # the two choices that most shape what the chart shows (zeros held out,
-  # sectors indexed), and it names the confound the chart does NOT remove rather
-  # than leaving a reader to assume it has been handled.
-  output$method_note <- renderUI({
-    grp <- if (input$eby == "grade") "HOLC grade"
-           else sprintf("%s quintile (breaks pooled across all zones)",
-                        eby_label())
-    tagList(
-      p(HTML(sprintf(paste(
-        "<b>Sample.</b> All %s HOLC-graded zones across %d cities in %d",
-        "states, the full study frame. Grouped by %s."),
-        format(nrow(frame), big.mark = ","), frame_cities, frame_states,
-        grp))),
-      p(HTML(paste(
-        "<b>Method.</b> Exposure is modeled emissions (NEMO, EPA NEI 2017) and",
-        "modeled noise (BTS); demographics are ACS 2019. Zones with no",
-        "measurable exposure are held out of the lines and reported separately",
-        "as the grey % &mdash; an absence is not a low value, and pooling the",
-        "two inflates the rail-noise D:A gradient from 3.0&times; to",
-        "19.3&times;. Each sector is divided by the median of its own leftmost",
-        "group so the three are comparable: absolute levels differ by five",
-        "orders of magnitude (median road NO is 2.6e5 against aviation's 3.0),",
-        "which no shared axis can show. Lines are group medians, bars the",
-        "interquartile range; the log axis is clipped to that range, but every",
-        "median and quartile is computed on all data."))),
-      p(HTML(paste(
-        "<b>Read with care.</b> Descriptive only, no controls and no causal",
-        "claim. Quintile breaks are pooled across cities, so a demographic",
-        "gradient partly reflects which cities sit at the top of the",
-        "distribution rather than differences within them; the HOLC grade",
-        "grouping is the one that holds up when zones are compared only",
-        "against others in the same city. No combined exposure index."))))
-  })
-
-  # ---- equity chart: the three sectors side by side, each indexed to its own
-  #      baseline group, so their gradients can be compared directly ----------
+  # ---- equity chart: the SELECTED sector, indexed to its baseline group ------
   #
-  # Why indexed rather than in real units: median road NO is 2.6e5 and median
-  # aviation NO is 3.0, five orders apart. On a shared axis two of the three
-  # panels flatten to a line; on free axes steepness is no longer comparable,
-  # which is the only thing this chart is for. Dividing each sector by the
-  # median of its own leftmost group puts every panel's baseline at 1.0 and
-  # makes the height of the last group that sector's disparity ratio, readable
-  # against the other two. Levels are deliberately discarded -- the map carries
-  # level, this carries inequality.
+  # One sector at a time, following the Source selector. This replaced three
+  # faceted panels; what the facets bought was the sector comparison, and the
+  # cost of the change is that the app no longer shows it -- a reader now has to
+  # click through Rail, Road and Aviation and hold the three shapes in memory.
+  # Note that the project's "show it, never state it" rule bars replacing that
+  # with a sentence claiming rail is the most stratified sector, so the
+  # comparison is currently not carried anywhere in the app.
+  #
+  # Why still indexed rather than in real units, now that there is nothing to
+  # compare against: the raw units are arbitrary model output spanning five
+  # orders of magnitude between sectors (median road NO is 2.6e5, aviation's is
+  # 3.0), so an axis in them is a number nobody can read. Dividing by the
+  # baseline group's median puts the baseline at 1.0 and makes the last group's
+  # height the disparity ratio, which reads on its own. Levels are deliberately
+  # discarded -- the map carries level, this carries inequality.
   #
   # Why a median line and not box plots: within-group spread is roughly six
   # times the between-group shift (rail noise grade A alone runs 0.18-2.39 IQR
@@ -1994,14 +1950,19 @@ server <- function(input, output, session) {
     eb  <- input$eby
     # frame, not zattr: the distribution behind the chart is every graded zone
     # in the study. This view is national throughout and reads no city input.
-    nat <- merge(exp_poll(), frame, by = "HOLCID")
+    #
+    # One sector, the selected one. Quintile breaks are unaffected by the
+    # narrowing: exp_frame carries every zone for every sector, so pooling three
+    # sectors repeated each zone's demographic value exactly three times and the
+    # quantiles were already the distinct-zone quantiles.
+    nat <- merge(exp_sel_frame(), frame, by = "HOLCID")
     # guard before the quantile binning below, which fails obscurely ("invalid
     # number of intervals") rather than usefully on an empty slice
     validate(need(nrow(nat) > 0, "No exposure data for this pollutant."))
 
     if (eb == "grade") {
       nat$bin  <- factor(nat$grade, levels = grade_levels)
-      xlab  <- "HOLC grade (A = 'best' ... D = 'hazardous')"
+      xlab  <- "Grade"
       base_lab <- "grade A"
     } else {
       # quintile breaks are pooled across all sectors and cities, which is the
@@ -2010,11 +1971,9 @@ server <- function(input, output, session) {
       labs_q <- paste0("Q", seq_len(length(br) - 1))
       binq <- function(v) cut(v, breaks = br, include.lowest = TRUE, labels = labs_q)
       nat$bin  <- binq(nat[[eb]])
-      xlab  <- sprintf("%s quintile (Q1 = lowest, Q5 = highest)", eby_label())
+      xlab  <- sprintf("%s quintile", eby_label())
       base_lab <- labs_q[1]
     }
-    nat$sector  <- factor(nat$sector, levels = names(infra_groups))
-
     # Presence and intensity are separate disparities and pooling them distorts
     # both. A zone with no measurable exposure is not a low-exposure zone, and
     # the zero share is itself steeply graded (rail noise: 36.5% of grade-A
@@ -2023,39 +1982,34 @@ server <- function(input, output, session) {
     # line shows intensity among zones that have exposure, labels show the
     # share with none.
     zero_tab <- aggregate(list(pct_zero = nat$xp == 0),
-                          list(bin = nat$bin, sector = nat$sector), mean)
+                          list(bin = nat$bin), mean)
     nat  <- nat[!is.na(nat$xp) & nat$xp > 0, ]
     validate(need(nrow(nat) > 0,
                   "No zone in this view has measurable exposure for this pollutant."))
 
-    # Index within sector to the median of its baseline group. A sector whose
-    # baseline group has no zones with exposure falls back to its own overall
-    # median, which keeps the panel drawable; its baseline then is not 1.0, and
-    # the reference line makes that visible rather than hiding it.
-    base_med <- sapply(levels(nat$sector), function(s) {
-      v <- nat$xp[nat$sector == s & nat$bin == levels(nat$bin)[1]]
-      m <- median(v, na.rm = TRUE)
-      if (!is.finite(m) || m <= 0) median(nat$xp[nat$sector == s], na.rm = TRUE) else m
-    })
-    nat$rel  <- nat$xp  / base_med[as.character(nat$sector)]
+    # Index to the median of the baseline group. If that group has no zones with
+    # exposure the fallback is the sector's own overall median, which keeps the
+    # panel drawable; the baseline then is not 1.0, and the reference line makes
+    # that visible rather than hiding it.
+    base_v   <- nat$xp[nat$bin == levels(nat$bin)[1]]
+    base_med <- median(base_v, na.rm = TRUE)
+    if (!is.finite(base_med) || base_med <= 0)
+      base_med <- median(nat$xp, na.rm = TRUE)
+    nat$rel  <- nat$xp / base_med
 
     # Axis limits come from the IQR envelope, not the raw range: aviation NO
-    # carries a rel value of 5.7e6, which would compress all three panels into a
+    # carries a rel value of 5.7e6, which would compress the panel into a
     # hairline. coord_cartesian zooms rather than filters, so every median and
     # quartile below is still computed on the full data.
-    qs  <- unlist(lapply(split(nat$rel, list(nat$sector, nat$bin), drop = TRUE),
+    qs  <- unlist(lapply(split(nat$rel, nat$bin, drop = TRUE),
                          quantile, probs = c(.25, .75), na.rm = TRUE))
     ylo <- max(min(qs, na.rm = TRUE) * 0.7, 1e-3)
     yhi <- max(qs, na.rm = TRUE) * 1.4
     y_lab <- ylo * 0.75   # zero-share label strip, below the bars
 
     ggplot(nat, aes(x = bin, y = rel)) +
-      # the panel the map is currently drawing, tinted so the Emission Source
-      # selector still visibly relates to this chart without driving it
-      geom_rect(data = data.frame(sector = factor(input$sector,
-                                                  levels = levels(nat$sector))),
-                inherit.aes = FALSE, xmin = -Inf, xmax = Inf,
-                ymin = -Inf, ymax = Inf, fill = "#fff8e1", alpha = 0.55) +
+      # No tint. It marked the selected sector's panel while three were on
+      # screen; with one panel there is nothing to distinguish it from.
       geom_hline(yintercept = 1, linetype = "dashed", colour = "grey55",
                  linewidth = 0.4) +
       stat_summary(fun.min = function(v) quantile(v, .25),
@@ -2076,18 +2030,15 @@ server <- function(input, output, session) {
       scale_x_discrete(drop = FALSE) +
       scale_y_log10() +
       coord_cartesian(ylim = c(y_lab * 0.85, yhi)) +
-      facet_wrap(~ sector, nrow = 1) +
       labs(x = xlab,
-           y = sprintf("Exposure relative to %s", base_lab),
+           y = "Exposure",
            subtitle = paste0(
-             sprintf("Each sector indexed to its own %s median (dashed line). ",
-                     base_lab),
+             sprintf("Indexed to the %s median (dashed line). ", base_lab),
              "Line: median among zones with exposure. Bars: IQR. ",
              "Grey %: share with none.",
              "\nLog axis, clipped to the IQR envelope.")) +
       theme_minimal(base_size = 13) +
       theme(panel.grid.major.x = element_blank(),
-            strip.text = element_text(face = "bold", size = 12),
             plot.subtitle = element_text(size = 9.5, colour = "grey30"))
   })
 }
