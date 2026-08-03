@@ -10,7 +10,7 @@ Purpose: a job-search work sample demonstrating R + Shiny + `leaflet` + spatial
 data (8,920 HOLC zones and 21,840 census tracts across 221 cities in 40 states)
 + reproducible dashboarding.
 
-**Live app:** _(add your shinyapps.io URL after deploying, see below)_
+**Live app:** <https://019fc8f3-a697-e0c2-756f-5c406ccc871e.share.connect.posit.cloud/>
 **Code:** this repository.
 
 ## Two views
@@ -156,7 +156,12 @@ carries the project's documented data-quality limits by design:
   canonical frame (`D:/research/redenv/data/output/`). Only needed to refresh
   the data. Takes several minutes, mostly clipping national NTAD road and rail
   layers to 221 city bounding boxes.
-- `deploy.R`: wraps `rsconnect::deployApp()`.
+- `manifest.json`: the pinned dependency list Posit Connect Cloud builds the
+  app against. Regenerate it with `rsconnect::writeManifest()` whenever a
+  package version changes, and commit it, or the deployed app keeps building
+  against the old versions.
+- `deploy.R`: an alternative shinyapps.io deploy via `rsconnect::deployApp()`.
+  Not the route this app is published by.
 
 ## Run locally
 ```r
@@ -166,15 +171,17 @@ shiny::runApp()
 Requires: `shiny`, `bslib`, `leaflet`, `dplyr`, `sf`, `ggplot2`, `scales`.
 
 ## Deploy a live link
-Run `deploy.R`: create a free shinyapps.io account, paste your token from
-Account > Tokens, and run the script. Redeploys reuse the same URL. Then paste
-that URL into the **Live app** line above.
+Published to **Posit Connect Cloud** from this repository: `main` branch,
+`manifest.json` at the repo root. Connect Cloud resolves dependencies from that
+manifest rather than by scanning `app.R`, so a package upgrade needs
+`rsconnect::writeManifest()` rerun and the result committed. Redeploys reuse
+the same URL.
 
 ## Provenance / data note
 Derived from **unpublished HUM Lab data**. External sharing of this derived,
 aggregated subset was **signed off by Chris Lim (2026-07-17)** (the same gate
-the phxmob work sample cleared 2026-07-08). **Keep the deployed app private
-until it is finished, then make it public.** Underlying data: NEMO
+the phxmob work sample cleared 2026-07-08). The app and this repository,
+including the derived bundle, are public. Underlying data: NEMO
 transportation-sector emissions (EPA NEI 2017); BTS National Transportation
 Noise Map; HOLC grades via the University of Richmond Mapping Inequality
 project; ACS 2019 demographics; BTS National Transportation Atlas Database for
