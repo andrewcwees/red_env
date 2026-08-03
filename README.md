@@ -160,8 +160,6 @@ carries the project's documented data-quality limits by design:
   app against. Regenerate it with `rsconnect::writeManifest()` whenever a
   package version changes, and commit it, or the deployed app keeps building
   against the old versions.
-- `deploy.R`: an alternative shinyapps.io deploy via `rsconnect::deployApp()`.
-  Not the route this app is published by.
 
 ## Run locally
 ```r
