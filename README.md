@@ -7,7 +7,7 @@ neighborhoods graded by the 1930s **HOLC ("redlining")** maps, and shows how
 that exposure tracks HOLC grade.
 
 Purpose: a job-search work sample demonstrating R + Shiny + `leaflet` + spatial
-data (8,920 HOLC zones and 21,825 census tracts across 221 cities in 40 states)
+data (8,920 HOLC zones and 21,840 census tracts across 221 cities in 40 states)
 + reproducible dashboarding.
 
 **Live app:** _(add your shinyapps.io URL after deploying, see below)_
@@ -21,8 +21,9 @@ and a polygon on the other are the same population.
 
 ### Map
 
-Pick a **city** (searchable, all 221), an **emission source** (rail, road,
-aviation), and an **emission type** (noise, NO, NO₂, PM2.5).
+Pick a **city** (searchable, all 221), a **Source** (rail, road, aviation), and
+an **Exposure** (noise, NO, NO₂, PM2.5). The two selectors sit side by side as
+a T-chart, so reading down a column compares within one axis.
 
 Three mutually exclusive fills in the layer control, because two choropleths
 stacked cannot both be read:
@@ -41,13 +42,23 @@ Areas with **no measurable exposure** are drawn in a separate grey rather than
 at the bottom of the ramp, so an absence never reads as a low value; the key
 carries that swatch beneath the ramp, in the same box, under a rule marking it
 as an absence rather than the bottom step of the scale. Hover any
-polygon for its exposure and demographics. The ramp is **fitted to the selected
-city**, so it reads the within-city spread; colors are deliberately not
-comparable between cities, and cross-city context comes from the equity chart
-instead. If no graded zone in the current view has measurable exposure, the
-header says so, and says whether the tract layer does.
+polygon for its exposure and demographics. If no graded zone in the current view
+has measurable exposure, the header says so, and says whether the tract layer
+does.
 
-A **basemap** toggle switches between a light cartographic base (default) and
+An **Exposure Scaling** switch picks what the shading is relative to, and the
+two settings answer different questions rather than one being better:
+**This City** (default) fits the ramp to the selected city's own range and shows
+the spread inside it, at the cost of colors meaning nothing between cities;
+**Full Sample** fits it to the national range for the current Source × Exposure,
+so two cities can be compared directly, at the cost of a low-exposure city
+reading as almost uniformly pale, which is the honest answer at that scale. The
+national domain is trimmed to the 2nd–98th percentile and out-of-range values
+are clamped to the end colors, because exposure is tail-heavy enough that an
+untrimmed ramp spends most of the palette on almost nothing. The key says which
+scale is in force.
+
+A **Background** toggle switches between a light cartographic base (default) and
 satellite imagery (Esri World Imagery, keyless), and a **fill opacity** slider
 dims the choropleth so the infrastructure underneath it is legible. Three
 toggleable **infrastructure overlays** (interstates and freeways, rail track,
@@ -62,33 +73,40 @@ registers).
 
 ### Data
 
-- **Redlined (D) vs. best-graded (A)**: the D:A intensity ratio as a headline,
-  over a four-row **A→D staircase** in grade colors. Each bar is that grade's
-  median as a **multiple of grade A**, drawn on an axis fixed across every
-  source × type, so a flat selection looks flat beside a steep one. Each row
-  carries its n, because grade A is the small-N constraint throughout this
-  project. Where the peak is not grade D (aviation peaks at B or C on all four
-  pollutants) the box says so, since the headline ratio is an endpoint and the
-  endpoint is not always the maximum.
-- **Equity chart** (`ggplot2`): three sectors faceted side by side, grouped by
+This view is national throughout and carries no city selector, so no pooled
+figure can be mistaken for the mapped city's.
+
+- **Grade staircase**: four rows, A→D, in grade colors, each carrying that
+  grade's median as a **multiple of grade A** plus its n, because grade A is the
+  small-N constraint throughout this project. Bars sit on an axis **fixed across
+  every Source × Exposure**, so a flat selection looks flat beside a steep one
+  rather than being rescaled to fill the same track; a parity tick marks 1.0,
+  where grade A's own bar ends. There is no headline ratio above it: the D row
+  already prints that number, so a large copy of it added size and no
+  information. Where the peak is not grade D (aviation peaks at B or C on all
+  four pollutants) a footnote says so, since the endpoint is not always the
+  maximum.
+- **Equity chart** (`ggplot2`): one panel for the selected Source, grouped by
   **HOLC grade** (default) or by demographic quintile (median income,
-  % Hispanic, % Black), with the selected city's zones overlaid as points. Each
-  sector is **indexed to the median of its own leftmost group**, so every panel
-  starts at 1.0 and the last group's height is that sector's disparity ratio;
-  absolute levels differ by five orders of magnitude between sectors and no
-  shared axis can show them. Lines are group medians, bars the IQR.
+  % Hispanic, % Black). Exposure is **indexed to the median of the leftmost
+  group**, so the baseline sits at 1.0 and the last group's height is the
+  disparity ratio. The raw units are arbitrary model output spanning five orders
+  of magnitude between sectors (median road NO is 2.6e5 against aviation's 3.0),
+  so an axis in them would read as nothing. Lines are group medians, bars the
+  IQR; the log axis is clipped to the IQR envelope, but every median and
+  quartile is computed on all data.
 
   The chart reports **two disparities separately**, because they compound and
   pooling them is misleading. The lines show **intensity** among zones that have
   measurable exposure; the grey row beneath shows each group's **share with
-  none**. Both track HOLC grade: for rail noise, 37% of grade-A zones have no
+  none**. Both track HOLC grade: for rail noise, 36% of grade-A zones have no
   measurable exposure against 14% of grade-D zones, and among zones that do have
   it, grade D carries **3.0×** the exposure of grade A.
 
-  A method block under the plot states the population, the two choices that most
-  shape the chart, and the confound it does **not** remove.
+  Staircase and chart read the same slice, so they agree by construction rather
+  than by coincidence.
 
-## What the chart shows
+## What the data shows
 
 Rail is the only orderly sector. Indexed medians A→D: rail noise
 1.00/1.53/2.27/**2.96** and rail NO 1.00/1.61/2.34/**2.98**, both monotone;
@@ -96,6 +114,10 @@ road is shallow and only noise is monotone (1.00/1.15/1.26/**1.40**); aviation
 is non-monotone on all four pollutants, peaking at B or C and ending near parity
 (NO₂ 1.00/1.09/0.87/**0.99**). "Rail is most stratified across every pollutant"
 overstates it: the ordering rests on medians, not the regression panel.
+
+The chart draws one sector at a time, so this comparison is something a reader
+assembles by clicking through Rail, Road and Aviation rather than something the
+app puts on one screen.
 
 ## Scope (deliberately hedged)
 This is a descriptive work sample, not a published or causal result, and it

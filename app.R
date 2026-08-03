@@ -1976,7 +1976,7 @@ server <- function(input, output, session) {
     }
     # Presence and intensity are separate disparities and pooling them distorts
     # both. A zone with no measurable exposure is not a low-exposure zone, and
-    # the zero share is itself steeply graded (rail noise: 36.5% of grade-A
+    # the zero share is itself steeply graded (rail noise: 36.1% of grade-A
     # zones vs 13.8% of grade-D). Pooling drags the baseline group toward the
     # floor and inflates the rail-noise D:A ratio from 3.1x to 19.3x. So: the
     # line shows intensity among zones that have exposure, labels show the
