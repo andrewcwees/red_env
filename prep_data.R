@@ -1,72 +1,56 @@
 # prep_data.R ---------------------------------------------------------------
 # One-time build: bake a slim, self-contained dataset for the redenv Shiny app.
 #
-# Reads the canonical redenv analytic frame on D:/ and writes redenv_data.rds
-# next to app.R. After this runs, the app needs no D:\ access and no Census key.
+# Reads the redenv analytic frame from the data root and writes redenv_data.rds
+# next to this script. The app itself needs no external data or API key.
 #
 # Geometry source: the HOLC/2010-tract crosswalk (cw.gpkg). Its zone key,
-# HOLCID = label_state_city_grade, is built identically to the zone ID in
-# xp_out.csv (see scripts/compile/clean.R), so the join is exact -- all 8,920
-# graded zones match. (Native holc_maps.gpkg polygons exist but key on a
-# different label field, so the crosswalk is the clean join.)
-#
-# EVERY city in the study frame is mapped: min_zones is 0, so the selector
-# carries all 221 cities and the map and the statistics answer to the same
-# 8,920 zones. The thin-city cutoff that used to narrow the map to 14 large
-# cities is gone, and with it the two-number-bases problem it created. What
-# made removing it viable is the tract layer below: a city with nine graded
-# zones no longer renders as nine polygons floating in white space, because
-# the tract layer covers the whole city view underneath them.
+# HOLCID = label_state_city_grade, matches the zone ID in xp_out.csv exactly,
+# so all 8,920 graded zones join. Every city in the study frame is mapped
+# (221 cities); the tract layer fills in the city view around graded zones.
 #
 # Bundle contents (list):
 #   zones  - one sf POLYGON row per HOLC zone: HOLCID, place, city, state,
-#            grade + zone demographics; simplified, EPSG:4326
+#            grade + zone demographics; EPSG:4326
 #   exp    - HOLCID x sector x pollutant -> xp, logxp
-#            (Rail + Road + Aviation; NO CEI, NO Total -- CEI is structurally
-#            broken. Total is dropped, but NOT because it is always a sum:
-#            that holds for the air pollutants only. See the note at the
-#            keep_sectors filter below before restoring it.)
+#            (Rail + Road + Aviation; no CEI, no Total -- see keep_sectors)
 #   cities - searchable city selector table (place, city, state, n_zones)
-#   rank   - sector first-place ranking summary (the anchor finding), re-tallied
-#            with the CEI comparison dropped
+#   rank   - sector first-place ranking summary, CEI comparisons dropped
 #   rank_cmp - how many pollutant x measure comparisons that tally covers
-#   frame  - all 8,920 graded zones, no geometry: HOLCID, place, grade + the
-#            three variables the equity chart groups by. Same population as
-#            `zones` now that min_zones is 0; kept as its own table because the
-#            plots need no geometry and the cutoff may be raised again.
-#   exp_frame - HOLCID x sector x pollutant -> xp for all 8,920 zones
+#   frame  - all graded zones, no geometry: HOLCID, place, grade + the three
+#            variables the equity chart groups by
+#   exp_frame - HOLCID x sector x pollutant -> xp for all zones
 #   tracts - one sf POLYGON row per census tract intersecting any mapped city:
-#            GEOID, inc, pop_total, pdens. NOT clipped to the city box (see
-#            section 6), and carried once however many cities it serves.
+#            GEOID, inc, pop_total, pdens (not clipped; see section 6)
 #   tract_city - place x GEOID membership, the per-city lookup for `tracts`
 #   exp_tract  - GEOID x sector x pollutant -> xp for those tracts
 #   infra  - list(road, rail, avi): NTAD transportation infrastructure clipped
 #            to each mapped city, for the map's overlay layers
 #
-# Hard constraints baked in here (see interactive_display_plan_2026-07-14.md):
-#   * No CEI in any form (structurally broken combined index).
+# Scope:
+#   * No combined exposure index (CEI); it is structurally unreliable.
 #   * logxp is the coloring scale for every pollutant (tail concentration).
-#   * Aviation is INCLUDED. It is zero-inflated (63-70% of zones have none, vs
-#     8-22% for rail and 0% for road), which is why it was held back, but the
-#     app now reports presence and intensity separately, so the zeros are shown
-#     as an absence rather than folded into the ramp. Dropping a sector because
-#     its gradient is weaker or messier would make the "rail is the most
-#     stratified sector" claim partly an artifact of which sectors were shown --
-#     and aviation is not in fact weak: it out-ranks road on the sector
-#     stratification tally (22% vs 17% of first-place finishes), it just
-#     disagrees in direction (its income and race gradients flip sign).
+#   * Aviation is included despite being zero-inflated (63-70% of zones have
+#     none); the app reports presence and intensity separately.
 #
-# Source data are unpublished HUM Lab work; externalizing this derived subset
-# was signed off by Chris Lim (2026-07-17; same gate phxmob cleared 2026-07-08).
+# Source data are unpublished HUM.Lab work; this derived subset is shared with
+# the PI's permission.
 
 suppressWarnings(suppressMessages({
   library(sf); library(data.table); library(dplyr); library(stringr)
 }))
 sf_use_s2(FALSE)  # crosswalk polygons trip s2 on a few degenerate edges
 
-app_dir <- "C:/Users/andre/Desktop/box/projects/life/job-search/portfolio-shiny-redenv"
-d_out   <- "D:/research/redenv/data/output"
-d_ntad  <- "D:/research/redenv/data/ntnm"   # NTAD infrastructure geojsons
+# -- paths --
+# Data root: set REDENV_DATA to override the platform default.
+data_root <- Sys.getenv("REDENV_DATA",
+  if (.Platform$OS.type == "windows") "D:/research/redenv" else "/Volumes/EHD/research/redenv")
+d_out  <- file.path(data_root, "data/output")
+d_ntad <- file.path(data_root, "data/ntnm")   # NTAD infrastructure geojsons
+
+# App folder: this script's own directory (falls back to the working directory)
+script_file <- sub("^--file=", "", grep("^--file=", commandArgs(FALSE), value = TRUE))
+app_dir <- if (length(script_file)) dirname(normalizePath(script_file)) else getwd()
 
 keep_sectors    <- c("Rail", "Road", "Aviation")
 drop_pollutants <- c("CEI")
@@ -225,11 +209,10 @@ rank  <- rank_long |>
   arrange(desc(n_first_place))
 cat(sprintf("sector ranking: %d comparisons (CEI dropped), %d first places\n",
             n_cmp, sum(rank$n_first_place)))
-print(as.data.frame(rank))
 
 # 5. infrastructure overlay geometry ----------------------------------------
 # The map answers "which zones are exposed"; the overlay answers "to what". The
-# three NTAD layers on D:/ are national and far too large to ship (571/361/40
+# three NTAD source layers are national and far too large to ship (571/361/40
 # MB), so each is filtered at the OGR level to the bundle's states, clipped to
 # the mapped cities' padded bounding boxes, and simplified.
 #
@@ -352,7 +335,6 @@ rail$net   <- rail$NET
 rail <- clip_to_cities(rail[, c("owner", "net")])
 cat(sprintf("rail: %d segments across %d cities\n", nrow(rail),
             length(unique(rail$place))))
-print(table(rail$net))
 
 # -- airports: public-use, operational, fixed-wing --
 avi <- st_read(

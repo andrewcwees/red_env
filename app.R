@@ -1,62 +1,25 @@
 # app.R ----------------------------------------------------------------------
 # Redlining & Transportation-Sector Environmental Exposure -- interactive map
 #
-# A work-sample Shiny app built from the redenv research project (Weesner,
-# Higashidani, ... Lim; UA). For a selected city it maps present-day
+# Work sample built from the redenv research project (Weesner et al., HUM.Lab,
+# University of Arizona). For a selected city it maps present-day
 # transportation-sector environmental exposure across neighborhoods graded by
 # the 1930s HOLC ("redlining") maps, and shows how exposure tracks HOLC grade.
 #
-#   * Map        -> three mutually exclusive fills for a chosen sector x
-#                   pollutant: HOLC zones by exposure (log scale), census tracts
-#                   by exposure, or HOLC zones by grade. The ramp is fitted to
-#                   the selected city and SHARED by the two exposure fills, so
-#                   switching between them answers "where do the graded zones
-#                   sit in this city's exposure surface" -- which is what the
-#                   tract layer is for, since graded zones are a minority of any
-#                   city. Colors do not compare across cities. Areas with no
-#                   measurable exposure get their own color, not the bottom of
-#                   the ramp.
-#   * Coverage   -> every city in the study frame is selectable (221 cities,
-#                   8,920 graded zones). The thin-city cutoff that once narrowed
-#                   the map to 14 large cities is gone; the tract layer answers
-#                   the sparse-map objection that motivated it, and the map and
-#                   the statistics now describe one population.
-#   * Overlay    -> the infrastructure itself: interstates and freeways, rail
-#                   track, airports. The choropleth says which zones are
-#                   exposed; the overlay says to what. The layer matching the
-#                   selected source is drawn by default, the other two are in
-#                   the layer control. Proximity is not the exposure model --
-#                   these are the same NTAD networks the emissions and noise
-#                   surfaces were built from, shown as a locator, not as a
-#                   second estimate of exposure.
-#   * Equity     -> national distribution across HOLC grades A-D (or a
-#                   demographic quintile) for that sector x pollutant, pooled
-#                   over every city. Reports presence and intensity
-#                   separately: boxes cover zones that HAVE exposure, labels
-#                   give each group's share with none. Both track grade, and
-#                   pooling them overstates the intensity gradient.
-#   * Figures    -> per-city figures (grade counts, zero share, city rank) sit
-#                   in the Map sidebar beside the selectors that drive them. The
-#                   Data tab carries the D-vs-A box, an A-to-D staircase indexed
-#                   to grade A, and the equity chart.
+#   * Map   -> one city: HOLC zones by grade, HOLC zones by exposure, or census
+#              tracts by exposure (the two exposure fills share one ramp), with
+#              road, rail, and airport overlays and per-city summary figures.
+#   * Data  -> national view: an A-to-D staircase indexed to grade A and an
+#              equity chart by HOLC grade or demographic quintile, reporting
+#              presence and intensity of exposure separately.
 #
-# Scope is deliberately hedged (see interactive_display_plan_2026-07-14.md):
-# Rail + Road + Aviation, no combined index (CEI), descriptive framing only --
-# no causal claims. This is a work sample, not a published result.
+# Scope: rail, road, and aviation; no combined exposure index; descriptive
+# only, no causal claims. Not a published result.
 #
-# Aviation is included even though it is heavily zero-inflated (~66% of zones
-# have no measurable aviation exposure, against 8-22% for rail and 0% for road).
-# The presence/intensity split above is what makes that reportable: the zeros
-# read as an absence, not as a low value. Its gradients also disagree with the
-# other two sectors -- aviation noise has the strongest %Hispanic gradient of
-# any sector x pollutant here, while its income gradient runs the opposite way
-# from rail and road. That disagreement is a finding, not a reason to omit it.
+# Self-contained: reads only redenv_data.rds (built by prep_data.R).
+# Run with: shiny::runApp()
 #
-# Self-contained: reads only redenv_data.rds (baked by prep_data.R). Run with:
-#   shiny::runApp()
-#
-# Derived from unpublished HUM Lab data; external sharing signed off by Chris
-# Lim (2026-07-17). Keep the deployed app private until finished, then publish.
+# Derived from unpublished HUM.Lab data; shared with the PI's permission.
 
 library(shiny)
 library(bslib)
@@ -1159,15 +1122,10 @@ ui <- page_sidebar(
                                    "so lines stop if you zoom out")))),
         leafletOutput("map", height = 500)
       )
-      # The per-city figures that used to sit in a row here are in the sidebar
-      # now, beside the selectors that drive them. This view is the map.
     ),
     nav_panel(
       title = "Data", value = "national",
-      # Full width, and alone: the basis card that used to sit beside this is in
-      # the Data sidebar now, where a reader is already looking when they ask
-      # what the tab is computed on. col_widths = 12 rather than dropping
-      # layout_columns, because fill = FALSE is what keeps the box sized to its
+      # Full width. layout_columns with fill = FALSE keeps the box sized to its
       # contents instead of stretching to the panel.
       layout_columns(
         fill = FALSE, col_widths = 12,
@@ -1232,13 +1190,9 @@ server <- function(input, output, session) {
   # scale, and the default. It reads the spread inside one city, at the cost of
   # colors meaning nothing between cities.
   #
-  # The national scale (nat_domain, above) is the other half of that trade and
-  # the reason both exist. A pooled domain was tried and dropped once for
-  # rendering most views near-uniform, but that objection only holds while it is
-  # the ONLY scale: under a national ramp a low-exposure city SHOULD read as
-  # uniformly pale, because that is what it is. It reads as a defect only if you
-  # expect within-city structure, which is what this domain is for. Each scale
-  # answers its own question, so neither has to answer both.
+  # The national scale (nat_domain, above) is the other half of that trade:
+  # it compares cities directly, so a low-exposure city reads as uniformly
+  # pale. Each scale answers its own question.
   #
   # Dropping zeros keeps the mass of no-exposure zones from compressing the ramp.
   #
