@@ -159,7 +159,7 @@ equity_by <- c("HOLC grade"     = "grade",
 # demographic quintile ramp (low -> high value, yellow -> dark red)
 q_ramp <- colorRampPalette(c("#ffffcc", "#800026"))
 
-# Basemap. Positron stays the default: a near-white background is what lets a
+# Basemap. Light gray stays the default: a near-white background is what lets a
 # choropleth carry the message, and it is the right base for reading exposure.
 # Satellite is offered for orientation -- it answers "what is actually there?"
 # (the rail yard, the interchange, the airport) in a way an abstract base
@@ -175,14 +175,28 @@ q_ramp <- colorRampPalette(c("#ffffcc", "#800026"))
 # Imagery carries no place names, so satellite pairs it with a labels-only
 # overlay. Both are tile layers, so the labels sit above the imagery and below
 # the polygons without any pane juggling.
+#
+# Light is Esri's Light Gray Canvas (base plus reference labels), also keyless.
+# CARTO's basemaps now require an API key and serve an "API key required"
+# placeholder tile without one.
+esri_url <- "https://server.arcgisonline.com/ArcGIS/rest/services/%s/MapServer/tile/{z}/{y}/{x}"
+esri_attr <- "Tiles &copy; Esri &mdash; Esri, HERE, Garmin, &copy; OpenStreetMap contributors, and the GIS user community"
+# The gray canvas is cached to z16; past that leaflet upscales its tiles.
+gray_opts <- tileOptions(maxNativeZoom = 16, maxZoom = 19)
+
 basemaps <- c("Light" = "light", "Satellite" = "sat")
 tiles_for <- function(map, which) {
   if (identical(which, "sat"))
     map |>
       addProviderTiles(providers$Esri.WorldImagery, group = "basemap") |>
-      addProviderTiles(providers$CartoDB.PositronOnlyLabels, group = "basemap")
+      addTiles(sprintf(esri_url, "Reference/World_Boundaries_and_Places"),
+               attribution = esri_attr, group = "basemap")
   else
-    map |> addProviderTiles(providers$CartoDB.Positron, group = "basemap")
+    map |>
+      addTiles(sprintf(esri_url, "Canvas/World_Light_Gray_Base"),
+               attribution = esri_attr, options = gray_opts, group = "basemap") |>
+      addTiles(sprintf(esri_url, "Canvas/World_Light_Gray_Reference"),
+               attribution = esri_attr, options = gray_opts, group = "basemap")
 }
 
 # The basemap switch lives on the map, beside the layer selectors, rather than
